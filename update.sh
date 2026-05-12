@@ -616,6 +616,48 @@ for f in "${NEW_FILES[@]}" "${UPDATED_FILES[@]}"; do
     esac
 done
 
+# === Step 5d: Repair-pass для critical runtime files ===
+# Закрывает gap «UNCHANGED ⇒ файл на месте». Если файл из manifest отсутствует
+# в целевой локации (workspace или CLAUDE_MEMORY_DIR), копируем из FMT даже если
+# хеш совпадает с remote (UNCHANGED). Срабатывает при ручном удалении / сбое предыдущего update.
+# Выполняется ПОСЛЕ propagation чтобы repair не дублировал работу NEW_FILES/UPDATED_FILES.
+REPAIRED=0
+while IFS='|' read -r fpath _; do
+    [ -z "$fpath" ] && continue
+    [ ! -f "$SCRIPT_DIR/$fpath" ] && continue
+
+    case "$fpath" in
+        memory/*.md|memory/*.yaml|memory/*.yml)
+            fname=$(basename "$fpath")
+            [ "$fname" = "MEMORY.md" ] && continue
+            if [ -d "$CLAUDE_MEMORY_DIR" ] && [ ! -f "$CLAUDE_MEMORY_DIR/$fname" ]; then
+                cp "$SCRIPT_DIR/$fpath" "$CLAUDE_MEMORY_DIR/$fname"
+                echo "  ⟲ $fpath → memory/ (repair)"
+                REPAIRED=$((REPAIRED + 1))
+            fi
+            ;;
+        .claude/skills/*|.claude/hooks/*|.claude/rules/*|.claude/lib/*|.claude/config/*|.claude/detectors/*|.claude/scripts/*|.claude/agents/*|.claude/settings.json)
+            dst="$WORKSPACE_DIR/$fpath"
+            if [ ! -f "$dst" ]; then
+                mkdir -p "$(dirname "$dst")"
+                cp "$SCRIPT_DIR/$fpath" "$dst"
+                case "$fpath" in *.sh) chmod +x "$dst" ;; esac
+                echo "  ⟲ $fpath → workspace (repair)"
+                REPAIRED=$((REPAIRED + 1))
+            fi
+            ;;
+    esac
+done < <(
+    python3 -c "
+import json
+with open('$MANIFEST') as f:
+    data = json.load(f)
+for entry in data.get('files', []):
+    print(entry['path'] + '|')
+" 2>/dev/null
+)
+[ "$REPAIRED" -gt 0 ] && echo "  ✓ $REPAIRED runtime-файлов восстановлено"
+
 # (Step 6b removed — repo rename no longer supported, no link migration needed)
 
 # === Step 6b2: Ensure ~/.iwe-paths exists (WP-219, DP.FM.009) ===
