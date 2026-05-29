@@ -123,6 +123,18 @@ fi
 CHANGELOG_SCRIPT="$FMT_DIR/scripts/changelog-append.sh"
 if [[ -f "$CHANGELOG_SCRIPT" ]]; then bash "$CHANGELOG_SCRIPT"; fi
 
+# ── Шаг 6. Запись в promotion-status.yaml (WP-7/PZ-6) ───────────────────────
+# Pair-on-Promote convention: STAGING.md (decision) + promotion-status.yaml
+# (execution). source_sha и fmt_sha добавляются вызывающим кодом после commit'а;
+# здесь записываем with "" для SHA — следующий commit обновит ручным append'ом
+# или интеграцией в pre-commit hook (PZ-extension).
+PROMOTE_COMMON="$FMT_DIR/scripts/promote-common.sh"
+if [[ -f "$PROMOTE_COMMON" ]]; then
+    # shellcheck source=./promote-common.sh
+    source "$PROMOTE_COMMON"
+    record_promotion ".claude/skills/$skill_name" "skill" "" "" "na"
+fi
+
 echo ""
 echo "Следующий шаг:"
 echo "  cd $FMT_DIR && git add .claude/skills/$skill_name .claude/skills-catalog.yaml CHANGELOG.md"
