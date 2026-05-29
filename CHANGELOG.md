@@ -28,10 +28,22 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 
 
+
+
+
 ## [Unreleased] — обновлено 2026-05-29
 
 ### Added
 
+- `abca838` feat(hooks): pre-commit gates PROMOTE-DRY-RUN + CLEAN-ENV-SMOKE (PD-2/PD-1, WP-347)
+- `a8eadab` feat(promote): promotion-status.yaml + record_promotion (PZ-6)
+- `36285bc` feat(coverage): coverage-skills.sh — B12a/b/c/d detector (PZ-3)
+- `ab2f461` feat(staging): staging-audit.sh — B12e decay detector (PZ-4)
+- `d575a6b` feat(sync): extend template-sync allowlist (PZ-2)
+- `2655dbb` feat(catalog): generate FMT skills-catalog.yaml (B12a artifact)
+- `a9ee8ac` feat(memory): backfill protocol-month-close.md to FMT (B12c)
+- `656262a` feat(rules): promote role-prefixes (S-15) to platform
+- `3b1cd77` feat(skills): promote bottleneck-pick (S-42+S-46) to platform L1
 - `8c15f16` feat(skill/day-close): мультипликатор считать ПО ФАКТУ + sanity check
 - `7285005` feat(distinctions): Ход (turn) ≠ Сессия (DP.SC.162 v2, WP-358)
 - `54e3f31` feat(distinctions): Session request/light/heavy — WP-358 peer-сессия 27 мая
@@ -63,10 +75,11 @@ Versioning: [Semantic Versioning](https://semver.org/).
 - `cecf52d` feat(WP-348): Ф4 — create-skill.sh + validate-skill.sh
 - `d4e3db2` feat(WP-348): Ф3 — SKILL.md v2 шаблон + генератор каталога + мигратор
 - `2136141` feat: settings-promote.sh + pre-commit HOOK-PATH-CONVENTION gate
-- `333c83d` feat(strategist): complete runner migration — run_skill() for day-open/day-close/week-close/strategy-session
 
 ### Changed
 
+- `b9e1658` docs(release): метрика fix-коммитов в RELEASE-PROCESS.md (PD-4, WP-347)
+- `33537d6` docs(promotion): B12 class + pair-on-promote convention (PZ-5)
 - `f1caefd` improve(peer): adversarial prompt — критик обязан найти хотя бы одно возражение
 - `74d5b67` sync(wp-new): синхронизация с user-level — active-wp пересборка + блокирующее правило
 - `c098042` ci(validate-template): add validate-fmt-scripts.sh to CI pipeline
@@ -80,6 +93,10 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `6b164f6` fix(promote): settings-promote --dry-run пропускает existence check (WP-347 PD-2 followup)
+- `c2e96e6` fix(promote): regenerate FMT skills-catalog.yaml (B12a)
+- `0ccb1e2` fix(catalog): generate-executor-catalog.py — раскрывать env IWE_GOVERNANCE_REPO в DEFAULT_OUTPUT
+- `143ca6a` fix(claude.md): restore IntegrationGate checklist items 1, 3
 - `32e3607` fix(server-calendar): add utf-8 encoding declaration to Python heredocs
 - `39ca8ea` fix(template): replace author-specific DS-my-strategy with placeholder
 - `beb7f15` fix(week-draft): WD1 — заполнять даты Пн-Вс в таблице метрик для совместимости с append
@@ -109,8 +126,6 @@ Versioning: [Semantic Versioning](https://semver.org/).
 - `8a231a3` fix(CI): закрыть 3 реальных блокера Validate Template
 - `b00ef4c` fix(settings-promote): inline jq check вместо полного validate-fmt-scripts.sh
 - `72f7572` fix: hook paths — $CLAUDE_PROJECT_DIR/ convention for all hook commands
-- `e337183` fix(manifest): remove strategist prompts from deprecated_files — runner still uses them
-- `5bffbc9` fix: replace hardcoded DS-strategy with GOVERNANCE_DIR/GOVERNANCE_REPO env vars
 
 
 ## [0.34.1] — 2026-05-21
