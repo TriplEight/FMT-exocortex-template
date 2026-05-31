@@ -2,7 +2,7 @@
 # see DP.SC.153
 # НЕ редактировать вручную — перегенерировать через generate-skills-catalog.sh
 #
-generated: 2026-05-30T14:57:03Z
+generated: 2026-05-31T07:53:40Z
 skills_dir: .claude/skills
 
 skills:
@@ -119,6 +119,7 @@ skills:
     - extend
     - day-close
     - day-open
+    - week-close
   - id: extend
     name: "extend"
     description: "Каталог расширяемости IWE: что можно настроить, какие extension points существуют, какие параметры доступны, как установить чужое расширение."
@@ -289,6 +290,7 @@ skills:
     - CLAUDE.md
     - day-close
     - audit-installation
+    - week-close
   - id: setup-wakatime
     name: "setup-wakatime"
     description: "Настройка WakaTime time-tracking для Claude Code и VS Code"
@@ -302,12 +304,13 @@ skills:
     - setup-wakatime
   - id: strategy-session
     name: "strategy-session"
-    description: "Стратегическая сессия — диспетчер. День-0 (skeleton-marker в Strategy.md ИЛИ явный intent «первая/initial/c нуля» ИЛИ нет файлов) → initial flow (цели, неудовлетворённости, первый WeekPlan). День-1+ → weekly flow (требует черновик от session-prep). Триггеры вызова skill — «проведём/запустим/начнём/откроем стратегическую сессию», «стратсессия», «strategy session», «strategy planning», «давай стратегировать», «помоги со стратегией», «постратегируем». Initial-режим внутри skill включается отдельно (см. Шаг 1)."
-    version: 0.0.0
-    layer: unknown
+    description: "Стратегическая сессия — диспетчер. День-0 (нет Strategy.md/WeekPlan) → initial flow (цели, неудовлетворённости, первый WeekPlan). День-1+ → weekly flow (требует черновик от session-prep). Триггеры — «проведём стратегическую сессию», «первая стратегическая сессия», «strategy session», «давай стратегировать»."
+    version: 1.0.0
+    layer: L1
     status: active
     triggers:
-      slash: []
+      slash:
+        - /strategy-session
     depends_on: []
     invoked_by:
     - strategy-session
@@ -364,15 +367,17 @@ skills:
     name: "week-close"
     description: "Протокол закрытия недели (Week Close). Ретро 7 дней + carry-over в новую неделю + платформенные шаги (бэкап, dirty repos)."
     version: 1.2.0
-    layer: unknown
+    layer: L1
     status: active
     triggers:
-      slash: []
+      slash:
+        - /week-close
     depends_on: []
     invoked_by:
     - run-protocol
     - extend
     - month-close
+    - week-close
     - week-close
   - id: wp-new
     name: "wp-new"

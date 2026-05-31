@@ -37,10 +37,15 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 
 
-## [Unreleased] — обновлено 2026-05-30
+
+
+
+## [Unreleased] — обновлено 2026-05-31
 
 ### Added
 
+- `fbc5585` feat(L1): promote DP.D.052 v2 формулировок из peer-сессии 2026-05-31-11
+- `64276ac` feat(WP-372): promote personal-guide-render SKILL.md — narrative 4 уровней
 - `4c88807` feat(WP-367 Ф5 uplift): in-session ad-hoc signal + Decision Gate with резюме + audit script
 - `b144b3a` feat(strategist): read weekly-digest.md as Loop C input
 - `92a1548` feat(WP-367): promote peer-conversation + kimi-peer-writer v4 (Decision Gate fix + двухосная meta.yaml)
@@ -86,6 +91,7 @@ Versioning: [Semantic Versioning](https://semver.org/).
 - `d4e3db2` feat(WP-348): Ф3 — SKILL.md v2 шаблон + генератор каталога + мигратор
 - `2136141` feat: settings-promote.sh + pre-commit HOOK-PATH-CONVENTION gate
 - `333c83d` feat(strategist): complete runner migration — run_skill() for day-open/day-close/week-close/strategy-session
+- `f550e9b` feat(pack-templates): DP.ROLE.NNN Constraint Analyst + DP.SC.NNN + DP.WP.NNN
 
 ### Changed
 
@@ -139,6 +145,7 @@ Versioning: [Semantic Versioning](https://semver.org/).
 - `72f7572` fix: hook paths — $CLAUDE_PROJECT_DIR/ convention for all hook commands
 - `e337183` fix(manifest): remove strategist prompts from deprecated_files — runner still uses them
 - `5bffbc9` fix: replace hardcoded DS-strategy with GOVERNANCE_DIR/GOVERNANCE_REPO env vars
+- `2c5e91d` fix(pack-templates): DP.WP.NNN — добавить §6 пример Stage Dependency Map
 
 
 ## [0.34.1] — 2026-05-21
