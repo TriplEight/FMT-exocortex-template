@@ -15,6 +15,11 @@
 
 set -uo pipefail
 
+# Bootstrap: load .exocortex.env via IWE_ROOT (set -Ux in fish, universal)
+if [ -n "${IWE_ROOT:-}" ] && [ -f "$IWE_ROOT/.exocortex.env" ]; then
+  set -a; . "$IWE_ROOT/.exocortex.env"; set +a
+fi
+
 IWE="${2:-${IWE_ROOT:-$HOME/IWE}}"
 INBOX="${1:-$IWE/${IWE_GOVERNANCE_REPO:-DS-strategy}/inbox}"
 GIT_DAYS="${WP_SWEEP_GIT_DAYS:-7}"
