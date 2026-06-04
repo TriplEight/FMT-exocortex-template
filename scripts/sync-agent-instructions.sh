@@ -27,7 +27,11 @@
 # Инвариант: CLAUDE.md SYNC-CORE — source-of-truth общего ядра. AGENTS.md derived, не править руками.
 
 set -euo pipefail
-
+# Load unified environment: WORKSPACE_DIR, IWE_ROOT, IWE_SCRIPTS, etc.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${IWE_ROOT:-}" ] && [ -f "$SCRIPT_DIR/../../.claude/lib/iwe-env-bootstrap.sh" ]; then
+  source "$SCRIPT_DIR/../../.claude/lib/iwe-env-bootstrap.sh" || true
+fi
 IWE_ROOT="${IWE_ROOT:-$HOME/IWE}"
 CLAUDE_MD="$IWE_ROOT/CLAUDE.md"
 BLOCKS_MD="$IWE_ROOT/AGENTS-agent-blocks.md"
