@@ -24,6 +24,12 @@
 
 set -eu
 
+# Load unified environment: WORKSPACE_DIR, IWE_ROOT, IWE_SCRIPTS, etc.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${IWE_ROOT:-}" ] && [ -f "$SCRIPT_DIR/../../.claude/lib/iwe-env-bootstrap.sh" ]; then
+  source "$SCRIPT_DIR/../../.claude/lib/iwe-env-bootstrap.sh" || true
+fi
+
 IWE_ROOT="${IWE_ROOT:-$HOME/IWE}"
 REGISTRY="${REGISTRY:-$IWE_ROOT/${IWE_GOVERNANCE_REPO:-}/docs/WP-REGISTRY.md}"
 MODE="${MODE:-all}"
