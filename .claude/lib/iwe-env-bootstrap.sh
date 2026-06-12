@@ -52,17 +52,30 @@ if [ -n "${HOME:-}" ]; then
 fi
 
 # ============================================================================
-# DERIVED VARIABLES (produced from WORKSPACE_DIR)
+# SOURCE OF TRUTH: .exocortex.env (single config — values + secrets)
+# ============================================================================
+# Once WORKSPACE_DIR is known, load the user config. Values defined here win
+# over derived defaults below. This is the single env source for all scripts —
+# no inline ". $IWE_ROOT/.exocortex.env" snippets elsewhere.
+if [ -f "$WORKSPACE_DIR/.exocortex.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$WORKSPACE_DIR/.exocortex.env"
+  set +a
+fi
+
+# ============================================================================
+# DERIVED VARIABLES (fallbacks — .exocortex.env values take precedence)
 # ============================================================================
 
 # Legacy variable for backward compatibility
-export IWE_ROOT="$WORKSPACE_DIR"
+export IWE_ROOT="${IWE_ROOT:-$WORKSPACE_DIR}"
 
 # Platform locations
 export IWE_GOVERNANCE_REPO="${IWE_GOVERNANCE_REPO:-DS-strategy}"
-export IWE_DS_MY_STRATEGY="${WORKSPACE_DIR}/${IWE_GOVERNANCE_REPO}"
-export IWE_TEMPLATE="${WORKSPACE_DIR}/FMT-exocortex"
-export IWE_RUNTIME="${WORKSPACE_DIR}/.iwe-runtime"
+export IWE_DS_MY_STRATEGY="${IWE_DS_MY_STRATEGY:-${WORKSPACE_DIR}/${IWE_GOVERNANCE_REPO}}"
+export IWE_TEMPLATE="${IWE_TEMPLATE:-${WORKSPACE_DIR}/FMT-exocortex}"
+export IWE_RUNTIME="${IWE_RUNTIME:-${WORKSPACE_DIR}/.iwe-runtime}"
 export IWE_SCRIPTS="${IWE_SCRIPTS:-${WORKSPACE_DIR}/FMT-exocortex/scripts}"
 
 # Export to child processes
