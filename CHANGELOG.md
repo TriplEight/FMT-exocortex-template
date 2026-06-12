@@ -21,12 +21,27 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 
 
-## [Unreleased] — обновлено 2026-06-09
+
+
+## [Unreleased] — обновлено 2026-06-12
 
 ### Added
 
+- `dfdc311` feat(FMT): auto-manifest generation with excluded_paths (WP-7 MFC4)
+- `e78ad61` feat: promote check-wp-format.py to platform (WP-7 follow-up)
+- `c718131` feat(linux): OS detection in bootstrap + iCloud N/A on Linux (#18)
+- `bd43035` feat: token optimization — lazy-load roles, distinctions, peer session modes
+- `7f3ceba` feat(setup): авторизация MCP по тирам — T3/T4 CLI, T1-T2 OAuth
+- `7a87f87` feat(conveyor): PR template surfacing 6 stations to reviewer
+- `34c6e36` feat(docs): add developer-guide and conveyor-card template
+- `23b0494` feat(FMT): auto-manifest generation with excluded_paths (WP-7 MFC4)
+- `a969580` feat: promote check-wp-format.py to platform (WP-7 follow-up)
 - `718ee1f` feat: token optimization — lazy-load roles, distinctions, peer session modes
 - `bdd5ec2` feat(setup): авторизация MCP по тирам — T3/T4 CLI, T1-T2 OAuth
+- `663af31` feat: token optimization — lazy-load roles, distinctions, peer modes
+- `ca42d00` feat(WP-10): slim day-open SKILL.md + Haiku facts-gathering
+- `5c4a97d` feat: add unified bootstrap sourcing to all scripts
+- `b08db48` feat(linux): port role agents from launchd to systemd user services
 - `7b33865` feat: density-reinjection стиля + блок-режим детектора (peer-session 2026-06-08-23)
 - `bfa7172` feat(WP-405 Ф2): translate all 39 SKILL.md descriptions to English
 - `321bab6` feat(distinctions): Gateway с одной ответственностью ≠ Gateway с прикладной логикой
@@ -76,7 +91,22 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `d192be9` Merge remote-tracking branch 'upstream/main'
+- `4622da9` Merge pull request #6 from TriplEight/wp-6-linux-portability-v2
+- `cf9d198` docs(conveyor): update README links after guide.md -> developer-guide.md
+- `62b36df` docs(conveyor): rename guide.md -> developer-guide.md
+- `1b92003` docs(conveyor): convert guide.md code-paths to real markdown links
+- `35fbbca` docs(conveyor): list stations at first mention + honest 'agent knows framework' claim
+- `3841a2f` docs(conveyor): fix links to docs/developer/ + repo-loading step content
+- `66fc7fd` docs(conveyor): collect developer docs under docs/developer/ + add repo-loading step
+- `c3df606` docs(readme): link conveyor onboarding for T4+ developers
+- `d951be1` docs(conveyor): add 'work in your own IWE' + T4 vs T1-T3 framing
+- `04ff150` docs(conveyor): single entry point + fix author-leak/class-scheme
 - `96003c5` Merge pull request #166 from TserenTserenov/fix/pr-164-blockers
+- `d0f4f10` note: Фиксация: Why Advice Doesn't Work 🔵 Уровень: Разли
+- `1d8ef2b` note: Фиксация: Stop Moments 🔵 Уровень: Различения Ключе
+- `4c26fea` note: Фиксация: The Overload — Burnout — Relapse Cycle 🔵
+- `974d4cb` refactor: move .iwe-paths from $HOME to $IWE_WORKSPACE for portability
 - `51f609d` docs(WP-349 Ф31): web-onboarding v2 — freemium, две оси, без триала
 - `ba4f5e6` docs(WP-349): Ф34 — онбординг-доки под канон двух осей
 - `6a634a8` chore: обновление promotion-status (peer-conversation skill)
@@ -95,10 +125,22 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `8dd6797` fix(CI): remove dead code in generate-manifest.sh + drop missing manifest entry
+- `ed688c1` fix(FMT): close manifest coverage gap (WP-7 MFC1-MFC3)
+- `9d2f022` fix(manifest): register 4 new lazy-load files from PR #164/#166
+- `9e23509` fix: typo in role-prefixes + trim protocol-open to ≤150 lines
+- `2818f19` fix(pr-164): remove duplicate templates.md, empty facts-gathering; add memory index entries
 - `e814373` fix(FMT): close manifest coverage gap (WP-7 MFC1-MFC3)
 - `d12febc` fix(manifest): register 4 new lazy-load files from PR #164/#166
 - `9a795af` fix: typo in role-prefixes + trim protocol-open to ≤150 lines
 - `1ad08db` fix(pr-164): remove duplicate templates.md, empty facts-gathering; add memory index entries
+- `e332633` fix: add 6 missing files to update-manifest.json (CI B2 check)
+- `212abca` fix(CI): add day-open/templates.md to update-manifest.json
+- `ab137e3` fix(strategist): exit 0 on concurrent run detection (exit 2 caused false WARN)
+- `82f9e22` fix: clean up bootstrap sourcing in FMT scripts
+- `ea5c01c` fix(manifest): register 85 files missing from B2 coverage check
+- `0b3f67e` fix: source $WORKSPACE_DIR/.iwe-paths instead of $HOME/.iwe-paths
+- `560dc66` fix(linux): bootstrap .exocortex.env in 8 scripts + pre-commit hook
 - `5600848` fix(strategy-session): системный фикс — СТОП в step-файлах, resume-механизм, устранение молчаливых переходов
 - `8a29f3b` fix(strategy-session): БЛОКИРУЮЩЕЕ — один шаг за раз, ждать ответа пилота перед следующим
 - `a80c7d1` fix(skills): translate ke/fpf descriptions to English for SkillHub compatibility
