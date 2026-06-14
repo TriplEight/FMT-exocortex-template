@@ -23,12 +23,14 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 
 
-## [Unreleased] — обновлено 2026-06-13
+
+## [Unreleased] — обновлено 2026-06-14
 
 ### Added
 
-- `4f4c232` feat(linux): кросс-платформенная портируемость — systemd user-таймеры ролей, единый env-bootstrap, OS-aware backup-check (#184). **Linux-портабилити — работа @TriplEight (Denis Pisarev), PR #179 + #181, консолидированы в #184 с тремя фиксами при интеграции.**
-- `5ca5e7b` feat(hooks): destructive-guard + check-trash — детерминированный блок необратимых git-операций (#183). **Хуки безопасности — @TriplEight (Denis Pisarev), извлечены из PR #176.**
+- `1f0eba6` feat(linux): cross-platform portability — env-bootstrap + systemd + OS-aware (clean integration of #179/#181)
+- `6ef52a7` feat(hooks): destructive-guard + check-trash (focused, extracted from #176)
+- `213065e` feat(day-open): smoke-tests integration — шаг 5 SKILL больше не PENDING (bug-2026-06-12)
 - `ba94993` feat(WP-7/DOA1): осознанная синхронизация day-open-scaffold.sh
 - `47ec08b` feat: model lifecycle (analysis/testing/active/archived) for local-llm stack (РП404 Ф2)
 - `0ce2cda` feat: promote local-llm stack to template (РП404 Ф3)
@@ -92,6 +94,13 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `8b5d570` refactor(day-open+manifest): SHLC1 dead code + DOPD1 lazy templates
+- `3922f45` refactor(COL-06): rename communication style levels L0/L1/L2 → S0/S1/S2
+- `5b617a9` docs: #171 правки гайда для внешнего контрибьютора + #177 §9 реальный планировщик (#189)
+- `8b982d1` Merge pull request #186 from TserenTserenov/chore/credit-denis-linux
+- `da65556` docs(changelog): credit @TriplEight for Linux portability (#179/#181) + safety hooks (#176)
+- `5ca5e7b` Merge pull request #183 from TserenTserenov/feat/destructive-guard-focused
+- `4f4c232` Merge pull request #184 from TserenTserenov/feat/linux-portability-clean
 - `44f4261` chore(fpf): обновление fpf-reference.md до commit 093d30e
 - `cf9d198` docs(conveyor): update README links after guide.md -> developer-guide.md
 - `62b36df` docs(conveyor): rename guide.md -> developer-guide.md
@@ -122,6 +131,13 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `5cd2c24` fix(day-open): уточнить guard и добавить backlink в templates.md
+- `158b31b` fix(backup): #172 cloud-scheduler stops clobbering exocortex/CLAUDE.md (#188)
+- `9725133` fix(notify): #169 DayPlan Telegram broken — resolve templates from .iwe-runtime + force UTF-8 (#187)
+- `4cf41d7` fix(day-close): #173 xargs false-FAIL in 9a + incorporate #180 facts-for-Haiku (#185)
+- `8e5c49e` fix: regenerate update-manifest.json for destructive-guard + check-trash hooks
+- `b02fd7b` fix(linux): regenerate update-manifest.json for systemd units + bootstrap
+- `599caa7` fix: установщик читал старый ключ каталога candidates вместо models (РП404)
 - `c7b92f4` fix(wp7): generate-manifest.sh skips [Unreleased], add verify-manifest.sh to excluded_paths
 - `e814373` fix(FMT): close manifest coverage gap (WP-7 MFC1-MFC3)
 - `d12febc` fix(manifest): register 4 new lazy-load files from PR #164/#166
