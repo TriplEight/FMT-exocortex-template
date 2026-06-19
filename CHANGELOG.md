@@ -55,10 +55,12 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 
 
-## [Unreleased] — обновлено 2026-06-18
+
+## [Unreleased] — обновлено 2026-06-19
 
 ### Added
 
+- `3a17360` feat(diagnose): promote diagnose-iwe v5.0 to platform (L1)
 - `3491420` feat(day-close): ask pilot for tomorrow priorities and update priorities.yaml
 - `1651574` feat(skills): promote 6 top skills to FMT with advisory fixes (WP-422)
 - `bcdb0ed` feat(skills): promote skill-creator v0.3.2 + C6 audit + pg-start Verification
@@ -75,8 +77,6 @@ Versioning: [Semantic Versioning](https://semver.org/).
 - `53cd985` feat(day-open): add ТВС labeling step to skill template (§6b2)
 - `36febfd` feat(strategy): модель ТВС в шаблон (стратегирование + ОРЗ)
 - `673474d` feat(WP-388): проекция базы стиля — 4 новых элемента регистра (зеркало L0)
-- `dd117c5` feat(styles): WP-412 Ф11 — дисциплина языковых стилей в шаблон IWE
-- `83434ea` feat: promote pull-on-touch.sh — детерминированный Pull-on-Touch (CLAUDE.md §2 п.5)
 
 ### Changed
 
@@ -89,6 +89,9 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `7e07287` fix: update manifest to exclude auto-generated translation files
+- `de06083` fix(wp-149): sync lesson-close.sh to use lesson/ path instead of workbook/
+- `24dbd80` fix: update subscription name from Бесконечное развитие to Инженерия интеллекта in template
 - `762a441` fix(setup): T3/T4 MCP auth — write .mcp.json with ict_token Bearer header
 - `290d149` fix(wp-7): sanitize author-specific content in template-sync'd files
 - `850c303` fix(wp-7/wpn1): promote create-wp.sh with GOV_REPO parametrization
@@ -105,7 +108,6 @@ Versioning: [Semantic Versioning](https://semver.org/).
 - `8073146` fix(WP-7): FMT delivery — .claude/styles propagation, manifest sync, smoke Test 6e
 - `cb8a1a6` fix(COL-06): communication-style-base.md — L1 → S1 (авторский слой)
 - `06b9d79` fix(WP-376): A52/A49/A50/A51 — template hygiene и agentigore sample
-- `c869a3c` fix(pull-on-touch): autostash вместо пропуска-на-грязном — тянет даже на dirty-репо
 
 
 ## [0.35.4] — 2026-06-15
