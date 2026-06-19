@@ -78,6 +78,9 @@
       "path": ".claude/hooks/pull-on-touch.sh"
     },
     {
+      "path": ".claude/hooks/rule-engine.sh"
+    },
+    {
       "path": ".claude/hooks/response-clarity-hook.sh"
     },
     {
@@ -124,6 +127,9 @@
     },
     {
       "path": ".claude/scripts/check-index-health.py"
+    },
+    {
+      "path": ".claude/scripts/generate-rules-registry.py"
     },
     {
       "path": ".claude/scripts/load-extensions.sh"
@@ -175,6 +181,9 @@
     },
     {
       "path": ".claude/skills/day-close/SKILL.md"
+    },
+    {
+      "path": ".claude/skills/day-close/day-close/SKILL.md"
     },
     {
       "path": ".claude/skills/day-open/SKILL.md"
@@ -316,6 +325,9 @@
     },
     {
       "path": ".claude/skills/week-close/SKILL.md"
+    },
+    {
+      "path": ".claude/skills/week-close/week-close/SKILL.md"
     },
     {
       "path": ".claude/skills/wp-new/SKILL.md"
@@ -942,12 +954,16 @@
       "path": "shared/rubrics/form-089.yaml"
     },
     {
+      "path": "translation-manifest.yaml"
+    },
+    {
+      "path": "translation/glossary-v0.1.csv"
+    },
+    {
       "path": "update.sh"
     }
   ],
   "excluded_paths": [
-    ".claude/skills/day-close/day-close/SKILL.md",
-    ".claude/skills/week-close/week-close/SKILL.md",
     "AGENTS-agent-blocks.md",
     "docs/BROWSER-CI-TEMPLATE.md",
     "docs/developer/README.md",
@@ -1044,9 +1060,7 @@
     "scripts/validate-skill.sh",
     "scripts/verify-manifest.sh",
     "scripts/week-draft-append.sh",
-    "scripts/week-draft-init.sh",
-    "translation-manifest.yaml",
-    "translation/glossary-v0.1.csv"
+    "scripts/week-draft-init.sh"
   ],
   "deprecated_files": [
     {
