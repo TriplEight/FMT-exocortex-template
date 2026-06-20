@@ -136,7 +136,10 @@ fi
 # ── Шаг 3. Копирование директории ────────────────────────────────────────────
 rm -rf "$DEST"
 mkdir -p "$DEST"
-cp -a "$SRC"/ "$DEST"/
+# "$SRC"/. (not "$SRC"/) so the CONTENTS land in $DEST on both BSD (macOS) and GNU (Linux/CI)
+# cp. With a bare trailing slash GNU cp nests the source as $DEST/<skill>/ when $DEST exists,
+# and the later substitute_file "$DEST/SKILL.md" then fails with "No such file" (CI-only).
+cp -a "$SRC"/. "$DEST"/
 
 # ── Шаг 4. Удаление мусора ───────────────────────────────────────────────────
 find "$DEST" -type f \( \
