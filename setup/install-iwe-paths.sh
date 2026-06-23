@@ -65,7 +65,7 @@ cat > "$IWE_ENV_FILE" <<IWEENV_EOF
 # Do not edit manually — changes will be lost.
 
 export IWE_WORKSPACE="$WORKSPACE_DIR"
-export IWE_TEMPLATE="\$IWE_WORKSPACE/FMT-exocortex"
+export IWE_TEMPLATE="\$IWE_WORKSPACE/FMT-exocortex-template"
 export IWE_SCRIPTS="\$IWE_TEMPLATE/scripts"
 export IWE_ROLES="\$IWE_TEMPLATE/roles"
 export IWE_RUNTIME="\$IWE_WORKSPACE/.iwe-runtime"
