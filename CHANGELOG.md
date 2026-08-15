@@ -69,12 +69,16 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 
 
-## [Unreleased] — обновлено 2026-06-26
+
+## [Unreleased] — обновлено 2026-08-15
 
 ### Added
 
-- feat(WP-16): slim day-open/close SKILL.md — 226→104 (-54%) and 263→126 (-52%) lines; verbose algorithms extracted to `*-details.md` lazy files
-- feat(WP-16): `lazy-context-loader.sh` hook — UserPromptSubmit, injects warm memory by keyword trigger (security-audit, systemd-scheduler, FPF distinctions)
+- `fc4c35c` feat: PII gate hook + privacy rules for contributors
+- `d4007ae` feat(day-open): replace server-calendar.sh with MCP Google Calendar, trim 46% tokens
+- `0ffa173` feat(WP-17): compress CLAUDE.md to 140 lines, extract 2 skills
+- `de15c25` feat(WP-445): lazy load role-prefixes — inject-role-prefixes hook
+- `5b51109` feat(WP-16): slim day-open/close SKILL.md + lazy-context-loader hook
 - `58fc4ac` feat(WP-7/SP1): promote skill local-llm to platform (L1)
 - `55851f9` feat(day-open): станок самодостаточен без bootstrap (ре-промоция)
 - `affae73` feat(day-open): промоция ТВС-структуры скаффолда + дефолт IWE
@@ -99,9 +103,17 @@ Versioning: [Semantic Versioning](https://semver.org/).
 - `5e21531` feat(WP-7/SP1): refactor skill-promote.sh — safety, validation, tests
 - `53cd985` feat(day-open): add ТВС labeling step to skill template (§6b2)
 - `36febfd` feat(strategy): модель ТВС в шаблон (стратегирование + ОРЗ)
+- `673474d` feat(WP-388): проекция базы стиля — 4 новых элемента регистра (зеркало L0)
 
 ### Changed
 
+- `5b6c98c` chore: apply upstream v0.35.4 — inject-role-prefixes hook, settings update
+- `83da961` Merge origin/main into feat/wp-17-claude-md-to-skills
+- `881d388` lint: add skill markers
+- `0513224` Merge pull request #10 from TriplEight/fix/issue-207-day-open-tokens
+- `4e2d0cc` chore: drop auto-generated churn from PR scope
+- `f99b55d` Merge pull request #9 from TriplEight/chore/reapply-authoring
+- `7c2608b` chore(template-sync): re-apply author customizations over synced upstream
 - `6f4c6a6` Merge pull request #8 from TriplEight/chore/sync-upstream
 - `0f65c39` merge: sync upstream (53 commits) into fork
 - `51ced2e` Merge pull request #7 from TriplEight/chore/rename-template-dedup-token-trim
@@ -122,12 +134,18 @@ Versioning: [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `9a11231` fix: remove personal calendar IDs, reference day-rhythm-config.yaml instead
+- `11df5c8` fix(WP-445): regen catalog, register lazy-loader, drop agent-memory ref, IWE_WORKSPACE fallback, USER-SPACE markers
 - `51cb56d` fix(#206/#207): edge-case tests for update.sh + Day Open token reduction
 - `64f690c` fix(#210): add EN section alternatives to protocol-artifact-validate.sh
+- `92786e9` fix(day-close): derive memory slug from WORKSPACE_DIR, not HOME
+- `f5bd12e` fix(ci): pin LC_ALL=C for manifest sort (#207)
+- `6874957` fix(day-open): repair awk-range collapse in artifact validator (#207)
+- `137a947` fix(ci): smoke-test pattern detection + manifest C-locale sort
 - `c2e66f2` fix(template-sync): normalize author workspace path to placeholder
 - `6141e76` fix(setup): IWE_TEMPLATE path to FMT-exocortex-template after rename
-- `6bb63c0` fix(CLAUDE): add pre-commit staged-scope verification rule
 - `c3df1f8` fix(#205/#203/#204): --check guard, §9 neutral stub, release automation
+- `6bb63c0` fix(CLAUDE): add pre-commit staged-scope verification rule
 - `d8c8568` fix(validate-template): skip wakatime-heartbeat.sh in orphan hook check
 - `5917dd6` fix: pathspec enforcement in 6 finalizing skills + lesson-close + skill-promote
 - `b7d1c4c` fix(diagnose): remove duplicate /diagnose trigger entries after rename

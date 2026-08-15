@@ -33,10 +33,10 @@
       "path": ".claude/hooks/capture-bus.sh"
     },
     {
-      "path": ".claude/hooks/check-trash.sh"
+      "path": ".claude/hooks/check-pii-in-platform.sh"
     },
     {
-      "path": ".claude/hooks/check-pii-in-platform.sh"
+      "path": ".claude/hooks/check-trash.sh"
     },
     {
       "path": ".claude/hooks/close-gate-reminder.sh"
@@ -60,10 +60,10 @@
       "path": ".claude/hooks/inject-fault-profile.sh"
     },
     {
-      "path": ".claude/hooks/lazy-context-loader.sh"
+      "path": ".claude/hooks/inject-role-prefixes.sh"
     },
     {
-      "path": ".claude/hooks/inject-role-prefixes.sh"
+      "path": ".claude/hooks/lazy-context-loader.sh"
     },
     {
       "path": ".claude/hooks/memory-exocortex-sync.sh"
@@ -168,9 +168,6 @@
       "path": ".claude/skills/archgate/SKILL.md"
     },
     {
-      "path": ".claude/skills/author-mode/SKILL.md"
-    },
-    {
       "path": ".claude/skills/artifactor/SKILL.md"
     },
     {
@@ -178,6 +175,9 @@
     },
     {
       "path": ".claude/skills/audit-installation/SKILL.md"
+    },
+    {
+      "path": ".claude/skills/author-mode/SKILL.md"
     },
     {
       "path": ".claude/skills/bottleneck-pick/SKILL.md"
@@ -225,6 +225,9 @@
       "path": ".claude/skills/fpf/SKILL.md"
     },
     {
+      "path": ".claude/skills/integration-gate/SKILL.md"
+    },
+    {
       "path": ".claude/skills/iwe-bug-report/SKILL.md"
     },
     {
@@ -232,9 +235,6 @@
     },
     {
       "path": ".claude/skills/iwe-rules-review/SKILL.md"
-    },
-    {
-      "path": ".claude/skills/integration-gate/SKILL.md"
     },
     {
       "path": ".claude/skills/iwe-update/SKILL.md"

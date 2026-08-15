@@ -2,7 +2,7 @@
 # see DP.SC.153
 # НЕ редактировать вручную — перегенерировать через generate-skills-catalog.sh
 #
-generated: 2026-06-26T16:31:34Z
+generated: 2026-08-15T14:12:31Z
 skills_dir: .claude/skills
 
 skills:
@@ -43,10 +43,10 @@ skills:
     depends_on: []
     invoked_by:
     - CLAUDE.md
-    - verify
-    - bottleneck-pick
     - archgate
     - decompose
+    - verify
+    - bottleneck-pick
   - id: artifactor
     name: "artifactor"
     description: "Classifies raw pilot request → structured JSON {task_type, class, artifact, budget_estimate, confidence, routing_tag, resolution_path}. Keyword-fast (<200ms) or Haiku fallback (<60s). Does NOT create WP or call executor."
@@ -107,8 +107,8 @@ skills:
         - /bottleneck-pick
     depends_on: []
     invoked_by:
-    - bottleneck-pick
     - platform-bottleneck
+    - bottleneck-pick
   - id: check-secret
     name: "check-secret"
     description: "Check a text fragment for potential secrets (API keys, tokens, passwords) BEFORE sending to chat / committing / publishing. Third protection layer on top of pre-commit hook (B7.7a) and PostToolUse redact (B7.7b). Manual gate — user explicitly calls on potentially sensitive text."
@@ -145,13 +145,13 @@ skills:
     depends_on: []
     invoked_by:
     - run-protocol
+    - day-close
+    - day-close
     - extend
-    - day-close
-    - day-close
   - id: day-open
     name: "day-open"
     description: "Day Open protocol. Collects yesterday's commits, issues, notes, calendar, bot QA, Scout, world events — builds DayPlan and compact dashboard."
-    version: 1.1.0
+    version: 1.2.0
     layer: L1
     status: active
     triggers:
@@ -160,13 +160,13 @@ skills:
     depends_on: []
     invoked_by:
     - CLAUDE.md
-    - run-protocol
-    - extend
-    - day-close
-    - day-close
     - week-close-pilot
-    - day-open
+    - run-protocol
+    - day-close
+    - day-close
     - week-close
+    - day-open
+    - extend
   - id: decompose
     name: "decompose"
     description: "Decompose work into stages with physical artifacts and acceptance checklists. Gap detector. Use when opening a WP ≥3h (open-loop/problem-framing) or on explicit request to break into stages. Executes R29 Decomposer role."
@@ -178,8 +178,8 @@ skills:
         - /decompose
     depends_on: []
     invoked_by:
-    - bottleneck-pick
     - decompose
+    - bottleneck-pick
   - id: diagnose
     name: "diagnose"
     description: "Диагностика ступени мастерства (Диагност R28, FORM.089 §6.1 v5.0) прямо в VS Code / claude.ai. До 6 вопросов, ~3 мин. Сохраняет cp-профиль в цифровой двойник (browser) или Neon (VS Code). Запускай когда: пилот говорит «пройди диагностику», «какая моя ступень», «/diagnose» — или ПРОАКТИВНО когда видишь пустой cp_profile или нового пользователя без данных."
@@ -220,7 +220,7 @@ skills:
   - id: fpf
     name: "fpf"
     description: "Загрузка применимых принципов для задачи из иерархии Pack → SPF → FPF. Используй когда нужно найти релевантные принципы перед принятием решения."
-    version: 1.0.0
+    version: 1.1.0
     layer: L1
     status: active
     triggers:
@@ -229,8 +229,8 @@ skills:
     depends_on: []
     invoked_by:
     - CLAUDE.md
-    - pack-new
     - fpf
+    - pack-new
   - id: integration-gate
     name: "integration-gate"
     description: "IntegrationGate — обязательный чеклист (4 шага) при проектировании нового инструмента, агента, детектора или системы. Загружать при триггерах: новый инструмент / агент / детектор / система / метод / интеграция."
@@ -300,8 +300,8 @@ skills:
     invoked_by:
     - ke
     - pack-new
-    - apply-captures
     - pack-creator
+    - apply-captures
   - id: kimi-peer-writer
     name: "kimi-peer-writer"
     description: "Peer-сессия DP.SC.154 где Kimi = писатель, Claude = напарник. Запускается простой фразой. Включает ОРЗ Opening и Closing, turn-loop, эскалации, Decision Gate (зафиксировать vs реализовать → ревью → проверить → задеплоить), отложенную финализацию и верификацию."
@@ -324,8 +324,8 @@ skills:
         - /lesson-close
     depends_on: []
     invoked_by:
-    - lesson-close
     - personal-guide-render
+    - lesson-close
   - id: local-llm
     name: "local-llm"
     description: "Локальный LLM-стек на Mac (Apple Silicon, MLX) под приватность и запасной режим. NL-вход к установке/запуску/переключению моделей + слой суждения для мониторинга новых моделей. Тонкая обёртка над скриптами РП404, не замена."
@@ -412,9 +412,9 @@ skills:
         - /personal-guide-render
     depends_on: []
     invoked_by:
-    - lesson-close
-    - personal-guide-start
     - personal-guide-render
+    - personal-guide-start
+    - lesson-close
   - id: personal-guide-start
     name: "personal-guide-start"
     description: "Bootstrap wrapper — creates an empty personal-guide repo under the pilot's account (flat name, no login in the name; if not yet created), then calls /personal-guide-render to populate 6 files. Use when pilot first asks 'create my personal guide', 'I want to start a personal development program', 'build me a starter plan'."
@@ -425,9 +425,9 @@ skills:
       slash: []
     depends_on: []
     invoked_by:
-    - bottleneck-pick
-    - personal-guide-start
     - personal-guide-render
+    - personal-guide-start
+    - bottleneck-pick
   - id: platform-bottleneck
     name: "platform-bottleneck"
     description: "Скилл IWE — см. тело файла"
@@ -465,8 +465,8 @@ skills:
     - CLAUDE.md
     - day-close
     - day-close
-    - audit-installation
     - week-close
+    - audit-installation
   - id: setup-wakatime
     name: "setup-wakatime"
     description: "Set up WakaTime time-tracking for Claude Code and VS Code."
@@ -486,7 +486,7 @@ skills:
     status: experimental
     triggers:
       slash:
-        - slash:
+        - /slash:
     depends_on: []
     invoked_by:
     - skill-creator
@@ -538,8 +538,8 @@ skills:
         - /vdv audit
     depends_on: []
     invoked_by:
-    - vdv
     - skill-creator
+    - vdv
   - id: verify
     name: "verify"
     description: "Верификация артефакта по эталону из Pack. Загружает роль VR.R.001 (Верификатор) с context isolation — проверяет результат, а не процесс создания."
@@ -552,25 +552,30 @@ skills:
     depends_on: []
     invoked_by:
     - run-protocol
-    - peer-conversation
     - day-close
-    - verify
-    - kimi-peer-writer
     - skill-creator
+    - peer-conversation
     - pack-creator
     - audit-docs
-  - id: w-reflection
-    name: "w-reflection"
-    description: "Записать W-рефлексию (мировоззренческий слот RCS) в learning.w_reflections. Используется Диагностом R28 (MIM.R.009) или вызывается пользователем после рефлексивной сессии. Влияет на gate Д→П (FORM.089 §5.2)."
-    version: 1.0.0
+    - kimi-peer-writer
+    - verify
+  - id: week-close
+    name: "week-close"
+    description: "Протокол закрытия недели (Week Close). Ретро 7 дней + carry-over в новую неделю + платформенные шаги (бэкап, dirty repos)."
+    version: 1.2.0
     layer: L1
     status: active
     triggers:
       slash:
-        - /w-reflection
+        - /week-close
     depends_on: []
     invoked_by:
-    - w-reflection
+    - week-close-pilot
+    - run-protocol
+    - month-close
+    - week-close
+    - week-close
+    - extend
   - id: week-close-pilot
     name: "week-close-pilot"
     description: "Run the pilot-facing Week Close protocol with progress review and carry-over."
@@ -583,23 +588,6 @@ skills:
     depends_on: []
     invoked_by:
     - week-close-pilot
-  - id: week-close
-    name: "week-close"
-    description: "Протокол закрытия недели (Week Close). Ретро 7 дней + carry-over в новую неделю + платформенные шаги (бэкап, dirty repos)."
-    version: 1.2.0
-    layer: L1
-    status: active
-    triggers:
-      slash:
-        - /week-close
-    depends_on: []
-    invoked_by:
-    - run-protocol
-    - extend
-    - week-close-pilot
-    - month-close
-    - week-close
-    - week-close
   - id: wp-new
     name: "wp-new"
     description: "Создание нового рабочего продукта (РП) с записью в 5 мест атомарно. Используй когда появляется новая задача, которой нет в плане недели."
@@ -611,6 +599,18 @@ skills:
         - /wp-new
     depends_on: []
     invoked_by:
-    - wp-new
     - pack-creator
     - decompose
+    - wp-new
+  - id: w-reflection
+    name: "w-reflection"
+    description: "Записать W-рефлексию (мировоззренческий слот RCS) в learning.w_reflections. Используется Диагностом R28 (MIM.R.009) или вызывается пользователем после рефлексивной сессии. Влияет на gate Д→П (FORM.089 §5.2)."
+    version: 1.0.0
+    layer: L1
+    status: active
+    triggers:
+      slash:
+        - /w-reflection
+    depends_on: []
+    invoked_by:
+    - w-reflection
