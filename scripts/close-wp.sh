@@ -35,6 +35,25 @@ if [[ -z "$WP_NUM" ]]; then
   exit 1
 fi
 
+# Public files use the canonical three-digit ID (WP-009), while the registry
+# stores the bare number (9).  Normalise the CLI once so closing a freshly
+# created card does not create a second WP-9 archive or miss WP-009.md.
+if ! WP_NUM=$(python3 - "$WP_NUM" <<'PY'
+import re
+import sys
+
+raw = sys.argv[1]
+match = re.fullmatch(r"(?:WP-)?(\d+)", raw)
+if not match:
+    raise SystemExit(1)
+print(int(match.group(1)))
+PY
+); then
+  echo "Некорректный номер РП: используйте число или WP-N" >&2
+  exit 1
+fi
+WP_ID=$(printf '%03d' "$WP_NUM")
+
 TODAY=$(date +%Y-%m-%d)
 
 # --- Шаг 1: зачеркнуть строку в REGISTRY ---
@@ -99,18 +118,17 @@ with open(registry_path, "w", encoding="utf-8") as f:
 print(f"   ✅ REGISTRY: WP-{wp_num} зачёркнут")
 PYEOF
 
-# --- Шаг 2: найти или создать archive/wp-contexts файл ---
-echo "2/3 Дописываю archive/wp-contexts..."
+# --- Шаг 2: создать archive/wp-contexts файл ---
+# issue #280: раньше здесь искали существующий stub от create-wp.sh (Шаг 2/6,
+# убран после TIF7) — с ним close-wp.sh дописывал резюме сюда, а git mv из
+# protocol-close.md падал на "destination exists". Stub больше не создаётся —
+# файл в archive/wp-contexts всегда создаётся здесь, заново, при закрытии.
+echo "2/3 Создаю archive/wp-contexts..."
 
 mkdir -p "$ARCHIVE_DIR"
 
-# Ищем существующий файл для этого WP
-CONTEXT_FILE=$(find "$ARCHIVE_DIR" -name "WP-${WP_NUM}-*.md" 2>/dev/null | sort | head -1)
-
-if [[ -z "$CONTEXT_FILE" ]]; then
-  # Создать новый файл с минимальной структурой
-  # Определить slug из REGISTRY
-  SLUG=$(python3 - "$REGISTRY" "$WP_NUM" <<'PYEOF2'
+# Определить slug из REGISTRY
+SLUG=$(python3 - "$REGISTRY" "$WP_NUM" <<'PYEOF2'
 import sys, re
 registry_path, wp_num = sys.argv[1], sys.argv[2]
 with open(registry_path, "r", encoding="utf-8") as f:
@@ -128,8 +146,19 @@ with open(registry_path, "r", encoding="utf-8") as f:
                 sys.exit(0)
 print("context")
 PYEOF2
-  )
-  CONTEXT_FILE="$ARCHIVE_DIR/WP-${WP_NUM}-${SLUG}.md"
+)
+CANONICAL_CONTEXT_FILE="$ARCHIVE_DIR/WP-${WP_ID}-${SLUG}.md"
+LEGACY_CONTEXT_FILE=$(find "$ARCHIVE_DIR" -maxdepth 1 -type f -name "WP-${WP_NUM}-*.md" -print 2>/dev/null | sort | head -1)
+if [[ -f "$CANONICAL_CONTEXT_FILE" ]]; then
+  CONTEXT_FILE="$CANONICAL_CONTEXT_FILE"
+elif [[ -n "$LEGACY_CONTEXT_FILE" ]]; then
+  CONTEXT_FILE="$LEGACY_CONTEXT_FILE"
+else
+  CONTEXT_FILE="$CANONICAL_CONTEXT_FILE"
+fi
+if [[ -f "$CONTEXT_FILE" ]]; then
+  echo "   ℹ️  Файл уже существует (повторный запуск close-wp.sh?), дописываю в него"
+else
   cat > "$CONTEXT_FILE" <<CTXEOF
 ---
 wp: ${WP_NUM}
@@ -198,9 +227,14 @@ else
 fi
 
 # --- Шаг 3: обновить статус в inbox/WP-NNN*.md ---
-echo "3/3 Обновляю inbox/WP-${WP_NUM}..."
+echo "3/3 Обновляю inbox/WP-${WP_ID}..."
 
-INBOX_FILE=$(find "$STRATEGY/inbox" -maxdepth 2 -name "WP-${WP_NUM}.md" -o -name "WP-${WP_NUM}-*.md" 2>/dev/null | grep -v "^$STRATEGY/inbox/WP-${WP_NUM}/" | sort | head -1)
+CANONICAL_INBOX_FILE="$STRATEGY/inbox/WP-${WP_ID}/WP-${WP_ID}.md"
+if [[ -f "$CANONICAL_INBOX_FILE" ]]; then
+  INBOX_FILE="$CANONICAL_INBOX_FILE"
+else
+  INBOX_FILE=$(find "$STRATEGY/inbox" -maxdepth 2 -type f \( -name "WP-${WP_NUM}.md" -o -name "WP-${WP_NUM}-*.md" \) -print 2>/dev/null | sort | head -1)
+fi
 
 if [[ -n "$INBOX_FILE" ]]; then
   python3 - "$INBOX_FILE" "$TODAY" <<'PYEOF4'
@@ -222,10 +256,10 @@ with open(path, "w", encoding="utf-8") as f:
 print(f"   ✅ inbox: status=done, closed_date={today}")
 PYEOF4
 else
-  echo "   ⚠️  inbox/WP-${WP_NUM}*.md не найден — обновить вручную"
+  echo "   ⚠️  inbox/WP-${WP_ID}*.md не найден — обновить вручную"
 fi
 
 echo ""
-echo "✅ WP-${WP_NUM} закрыт"
+echo "✅ WP-${WP_ID} закрыт"
 echo "   Контекст: $(basename "${CONTEXT_FILE}")"
 echo "   Следующий шаг: git add + commit оба файла"

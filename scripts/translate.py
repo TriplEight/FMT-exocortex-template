@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # see WP-415 (IWE translation pipeline: RU FMT-exocortex-template → EN iwesys)
-"""IWE document translator: RU source → EN candidate via Claude API.
+"""IWE document translator: RU source → EN candidate via Claude models on OpenRouter.
 
 Usage:
     # Translate files to output directory
@@ -8,21 +8,44 @@ Usage:
 
     # Discover untranslated terms (writes CSV to stdout)
     python3 scripts/translate.py --mode=discover docs/README.md
+
+    # Translate only category-D files changed since last sync (WP-415 Ф-В2)
+    python3 scripts/translate.py --mode=delta --output-dir ../en-out \\
+        --state-file ../en-draft/.translation-state.yaml
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
+import os
 import re
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
-import anthropic
 import yaml
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
+# claude-sonnet-4.6 supports up to 128K completion tokens on OpenRouter
+# (verified via /api/v1/models); 16K turned out to be an arbitrary self-
+# imposed cap, not a model limit — it truncated the largest current doc
+# (docs/LEARNING-PATH.md, ~1700 lines) with no error until the
+# TranslationTruncated check above was added. 64K leaves headroom above
+# that file's real need without approaching the model's own ceiling.
+MAX_OUTPUT_TOKENS = 65536
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# OpenRouter grants the standard (non-strict) rate limit only when these
+# attribution headers are present (see iwe-translation-engine lesson, 2026-06-22)
+OPENROUTER_HEADERS = {
+    "HTTP-Referer": "https://github.com/TserenTserenov/FMT-exocortex-template",
+    "X-Title": "IWE Translate Sync",
+}
 
 _SCRIPT_ROOT = Path(__file__).parent.parent  # FMT-exocortex-template root
 DEFAULT_STYLE = _SCRIPT_ROOT / "translation" / "en-doc-style.md"
@@ -112,37 +135,85 @@ def ascii_guard(body: str, meta: dict, translate_keys: list[str]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+class RateLimitError(RuntimeError):
+    """OpenRouter returned HTTP 429."""
+
+
+class OpenRouterClient:
+    """Minimal OpenRouter chat-completions client. OpenRouter's API is
+    OpenAI-compatible, but this script only ever talks to OpenRouter — a raw
+    HTTP call avoids depending on the `openai` package for that compatibility
+    shim (and the CI dependency-install drift that came with it)."""
+
+    def __init__(self, api_key: str, base_url: str) -> None:
+        self._endpoint = f"{base_url.rstrip('/')}/chat/completions"
+        self._headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            **OPENROUTER_HEADERS,
+        }
+
+    def chat_completion(self, model: str, messages: list[dict], max_tokens: int) -> tuple[str, str]:
+        """Returns (finish_reason, content)."""
+        body = json.dumps({"model": model, "max_tokens": max_tokens, "messages": messages}).encode("utf-8")
+        request = urllib.request.Request(self._endpoint, data=body, method="POST", headers=self._headers)
+        try:
+            with urllib.request.urlopen(request) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                raise RateLimitError(str(e)) from e
+            raise
+        choice = payload["choices"][0]
+        return choice["finish_reason"], choice["message"]["content"] or ""
+
+
+def _make_client() -> OpenRouterClient:
+    """Build the OpenRouter client (env: OPENROUTER_API_KEY)."""
+    return OpenRouterClient(
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        base_url=os.environ.get("OPENAI_BASE_URL", OPENROUTER_BASE_URL),
+    )
+
+
+class TranslationTruncated(RuntimeError):
+    """The model hit MAX_OUTPUT_TOKENS before finishing — output is a partial
+    document, not a translation. Must never be written to disk silently
+    (caught 2026-07-06: docs/LEARNING-PATH.md shipped cut off at line 455
+    of 1705, no error, no signal — the truncated finish_reason went
+    unchecked)."""
+
+
 def translate_with_retry(
-    client: anthropic.Anthropic,
+    client: OpenRouterClient,
     system_prompt: str,
     user_content: str,
     model: str,
     max_retries: int = 5,
 ) -> str:
-    """Call Claude API with exponential backoff on rate-limit errors (Critical fix #4)."""
+    """Call the model with exponential backoff on rate-limit errors (Critical fix #4)."""
     delay = 2.0
     for attempt in range(max_retries):
         try:
-            response = client.messages.create(
+            finish_reason, content = client.chat_completion(
                 model=model,
-                max_tokens=8192,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_content}],
+                max_tokens=MAX_OUTPUT_TOKENS,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
             )
-            return response.content[0].text
-        except anthropic.RateLimitError:
+            if finish_reason == "length":
+                raise TranslationTruncated(
+                    f"model output hit the {MAX_OUTPUT_TOKENS}-token cap before "
+                    "finishing — source is too long for a single translation call"
+                )
+            return content
+        except RateLimitError:
             if attempt == max_retries - 1:
                 raise
             time.sleep(delay)
             delay *= 2
-        except anthropic.APIStatusError as e:
-            if e.status_code == 429:
-                if attempt == max_retries - 1:
-                    raise
-                time.sleep(delay)
-                delay *= 2
-            else:
-                raise
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
@@ -159,21 +230,24 @@ def _parse_translation_response(
     """Split combined FM+body LLM response. Returns (translated_fm_dict, body_text).
 
     If LLM did not use XML markers (fallback), uses full response as body.
+    `translate_file` always wraps the body in `<body>...</body>` regardless
+    of whether there's frontmatter to translate, so the marker strip below
+    must run unconditionally too — an earlier `if not fm_values: return`
+    shortcut here skipped it, leaking the literal `<body>` tag into every
+    frontmatter-less file's output (caught 2026-07-06, 13/38 files affected).
     """
-    if not fm_values:
-        return {}, response
-
     fm_translated: dict[str, str] = {}
-    fm_match = re.search(
-        r"<frontmatter_values>(.*?)</frontmatter_values>", response, re.DOTALL
-    )
-    if fm_match:
-        for line in fm_match.group(1).strip().split("\n"):
-            if ":" in line:
-                k, _, v = line.partition(":")
-                k, v = k.strip(), v.strip()
-                if k in translate_keys:
-                    fm_translated[k] = v
+    if fm_values:
+        fm_match = re.search(
+            r"<frontmatter_values>(.*?)</frontmatter_values>", response, re.DOTALL
+        )
+        if fm_match:
+            for line in fm_match.group(1).strip().split("\n"):
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    k, v = k.strip(), v.strip()
+                    if k in translate_keys:
+                        fm_translated[k] = v
 
     body_match = re.search(r"<body>(.*?)</body>", response, re.DOTALL)
     if body_match:
@@ -197,7 +271,7 @@ def translate_file(
     file_path: Path,
     system_prompt: str,
     translate_keys: list[str],
-    client: anthropic.Anthropic,
+    client: OpenRouterClient,
     model: str,
 ) -> tuple[str, list[str]]:
     """Translate a single file. Returns (translated_text, violations).
@@ -236,7 +310,10 @@ def translate_file(
             f"limit ~{MAX_PROMPT_CHARS // 4 // 1000}k tokens"
         ]
 
-    raw = translate_with_retry(client, system_prompt, user_content, model)
+    try:
+        raw = translate_with_retry(client, system_prompt, user_content, model)
+    except TranslationTruncated as e:
+        return "", [f"translation_truncated: {e}"]
     fm_translated, en_body = _parse_translation_response(raw, fm_values, translate_keys)
 
     en_meta = dict(meta)
@@ -306,6 +383,10 @@ def _build_system_prompt(style_path: Path, glossary: dict, manifest: dict) -> st
         "# Do Not Translate\n"
         f"## Identifier patterns (keep verbatim)\n{id_pattern_lines}\n\n"
         f"## Proper nouns (keep verbatim)\n{proper_name_lines}\n\n"
+        "# Output Constraint\n"
+        "The published English output must contain no Cyrillic characters. "
+        "Translate natural-language text even when it appears in an inline code example; "
+        "only the identifier patterns and proper nouns above remain verbatim.\n\n"
         "# Output Format\n"
         "When given <frontmatter_values> and <body> sections, "
         "return them in the same XML-tag structure.\n"
@@ -395,7 +476,7 @@ def run_translate(args: argparse.Namespace, manifest: dict, glossary: dict) -> i
     output_dir = Path(args.output_dir)
     translate_keys: list[str] = manifest.get("frontmatter_translate_keys", [])
 
-    client = anthropic.Anthropic()
+    client = _make_client()
     system_prompt = _build_system_prompt(style_path, glossary, manifest)
     model: str = args.model
 
@@ -418,12 +499,16 @@ def run_translate(args: argparse.Namespace, manifest: dict, glossary: dict) -> i
             file_path, system_prompt, translate_keys, client, model
         )
 
-        if violations and violations[0].startswith("file_too_large"):
+        if violations and violations[0].startswith(("file_too_large", "translation_truncated")):
             print(f"  SKIP {violations[0]}", file=sys.stderr)
             # Write a marker file so CI can detect skipped files
             out_path.write_text(
                 f"# TRANSLATION SKIPPED\n# {violations[0]}\n", encoding="utf-8"
             )
+            # A skipped file is a missing translation, not a cosmetic nit —
+            # visible at the same rc=2 tier as ASCII-guard warnings rather
+            # than a silent exit 0 (both prior skip paths did this).
+            exit_code = 2
             continue
 
         out_path.write_text(translated, encoding="utf-8")
@@ -440,6 +525,105 @@ def run_translate(args: argparse.Namespace, manifest: dict, glossary: dict) -> i
 
 
 # ---------------------------------------------------------------------------
+# Delta mode (WP-415 Ф-В2: translate only category-D files changed since last sync)
+# ---------------------------------------------------------------------------
+
+
+def _category_d_files(repo_root: Path, manifest: dict) -> list[Path]:
+    """Expand category-D manifest patterns to concrete tracked .md files.
+
+    `exclude` entries are relative paths for files swept in by a directory
+    pattern (e.g. `docs/`) that don't belong in auto-translate — typically
+    blank templates whose frontmatter holds structural identifiers rather
+    than prose (see translation-manifest.yaml comment).
+    """
+    category_d = manifest.get("categories", {}).get("D", {})
+    patterns: list[str] = category_d.get("files", [])
+    excluded = {repo_root / rel for rel in category_d.get("exclude", [])}
+    found: list[Path] = []
+    for pattern in patterns:
+        candidate = repo_root / pattern
+        if candidate.is_file():
+            found.append(candidate)
+        elif candidate.is_dir():
+            found.extend(sorted(candidate.rglob("*.md")))
+    return [f for f in found if f not in excluded]
+
+
+def _git_changed_since(repo_root: Path, since_sha: str) -> set[Path]:
+    """Absolute paths changed between since_sha and HEAD (raises on git failure)."""
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{since_sha}..HEAD"],
+        cwd=repo_root, capture_output=True, text=True, check=True,
+    )
+    return {repo_root / line for line in result.stdout.splitlines() if line.strip()}
+
+
+def _git_head_sha(repo_root: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root, capture_output=True, text=True, check=True,
+    )
+    return result.stdout.strip()
+
+
+def _write_state_file(state_path: Path, sha: str, files_translated: list[str]) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "schema_version": 1,
+        "last_synced_sha": sha,
+        "last_run_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "files_translated": files_translated,
+    }
+    state_path.write_text(
+        yaml.dump(state, allow_unicode=True, default_flow_style=False), encoding="utf-8"
+    )
+
+
+def run_delta(args: argparse.Namespace, manifest: dict, glossary: dict) -> int:
+    """Translate only category-D files changed since `.translation-state.yaml`.
+
+    First run (no state file / no last_synced_sha) translates the full
+    category-D set — there is no baseline to diff against yet.
+    """
+    if not args.output_dir:
+        print("ERROR: --output-dir is required for delta mode", file=sys.stderr)
+        return 1
+
+    repo_root = _find_repo_root(Path.cwd())
+    output_dir = Path(args.output_dir)
+
+    state: dict = {}
+    if args.state_file:
+        state_file = Path(args.state_file)
+        if state_file.exists():
+            with state_file.open(encoding="utf-8") as f:
+                state = yaml.safe_load(f) or {}
+    last_sha = state.get("last_synced_sha")
+
+    d_files = _category_d_files(repo_root, manifest)
+    if last_sha:
+        changed = _git_changed_since(repo_root, last_sha)
+        targets = [f for f in d_files if f in changed]
+    else:
+        targets = d_files
+
+    head_sha = _git_head_sha(repo_root)
+
+    if not targets:
+        print("No category-D files changed since last sync — nothing to translate.", file=sys.stderr)
+        _write_state_file(output_dir / ".translation-state.yaml", head_sha, [])
+        return 0
+
+    args.files = [str(f) for f in targets]
+    exit_code = run_translate(args, manifest, glossary)
+
+    rel_targets = [str(f.relative_to(repo_root)) for f in targets]
+    _write_state_file(output_dir / ".translation-state.yaml", head_sha, rel_targets)
+    return exit_code
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -450,10 +634,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["translate", "discover"],
+        choices=["translate", "discover", "delta"],
         default="translate",
         help="translate: call Claude API and write output; "
-             "discover: find untranslated terms (CSV to stdout)",
+             "discover: find untranslated terms (CSV to stdout); "
+             "delta: translate only category-D files changed since last sync",
     )
     parser.add_argument(
         "--manifest",
@@ -473,19 +658,28 @@ def main() -> int:
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
-        help=f"Claude model ID (default: {DEFAULT_MODEL})",
+        help=f"Model ID on OpenRouter (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Output directory for translated files (translate mode only)",
+        help="Output directory for translated files (translate/delta modes)",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        help="Path to .translation-state.yaml (delta mode: last_synced_sha source)",
     )
     parser.add_argument(
         "files",
-        nargs="+",
-        help="Files to process",
+        nargs="*",
+        help="Files to process (translate/discover modes; ignored in delta mode)",
     )
     args = parser.parse_args()
+
+    if args.mode in ("translate", "discover") and not args.files:
+        print(f"ERROR: --mode={args.mode} requires at least one file argument", file=sys.stderr)
+        return 1
 
     manifest_path = Path(args.manifest)
     if not manifest_path.exists():
@@ -499,6 +693,8 @@ def main() -> int:
 
     if args.mode == "discover":
         return run_discover(args, manifest, glossary)
+    if args.mode == "delta":
+        return run_delta(args, manifest, glossary)
     return run_translate(args, manifest, glossary)
 
 

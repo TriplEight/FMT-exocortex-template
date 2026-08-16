@@ -25,23 +25,54 @@ SKIP_PATTERNS=(
     ".DS_Store"
     "generate-manifest.sh"
     "update-manifest.json"
+    "update-manifest.local.json"
     "seed/"
     "templates/"
 )
 
 # === Исключения, которые идут в excluded_paths (dev-only, не раздаются пользователям) ===
+# issue #247 (корень #246): раньше здесь стоял общий "scripts/" — весь каталог
+# считался dev-only, и update.sh никогда не доставлял ни один из 92 файлов
+# пользователям, вопреки docs/DATA-POLICY.md. Полный анализ графа ссылок
+# (peer-session 2026-07-11-11) показал, что это неверно: большинство скриптов
+# зовутся из доставляемых skills/hooks (иногда транзитивно — day-open-pipeline.sh
+# запускается через launchd, а не напрямую из skill, и это не ловится grep-ом).
+# Решение по итогам ЭМОГССБ: default = доставлять scripts/ целиком; explicit
+# exclude только для скриптов, у которых НЕТ ни одной ссылки из доставляемого
+# артефакта (проверено — только .github/workflows/* или ничего). Ошибка в эту
+# сторону (лишний dev-скрипт доставлен) безвредна; обратная (нужный скрипт не
+# доставлен) — воспроизводит #246. EXCLUDED_SCRIPTS ниже — короткий список,
+# не растущий с каждым новым skill (в отличие от прежнего allow-list на *доставку*).
 EXCLUDED_PATTERNS=(
-    "scripts/"
     "scripts/tests/"
-    "docs/developer/"
+    "docs/developer/"    # never delivered since the first manifest commit (23b0494, WP-7 MFC4) —
+                          # unrelated to the WP-401 Ф6.1 docs/ freeze below, keep excluded
+    "sessions/2026-06/"    # WP-401 Ф6.1: archived transcript, not for delivery. NOTE: sessions/00-index.md
+                            # stays OUT of this exclusion on purpose — it's a protected seed-once-then-never-
+                            # touch file like memory/MEMORY.md (see is_protected_user_file() in update.sh),
+                            # not a deprecated artifact. A future "sessions/YYYY-MM/" transcript must get its
+                            # own dated exclusion here, not a blanket "sessions/".
+)
+
+EXCLUDED_SCRIPTS=(
+    "scripts/check-component-parity.sh"        # CI-only: validate-template.yml + verify-template-integrity.sh
+    "scripts/check-manifest-rename-coverage.py" # CI-only: validate-template.yml
+    "scripts/verify-template-integrity.sh"      # локальное зеркало CI-гейта для контрибьюторов шаблона, не для пользователей
+    "scripts/translate.py"                      # CI-only: translate-sync.yml (синхронизация EN-доков автором шаблона)
+    "scripts/delivery_checks.py"                # CI-only: translate-sync.yml
+    "scripts/audit-ad-hoc-roles.py"             # нет ссылок ни из одного доставляемого артефакта
+    "scripts/agent-dashboard.py"                # только scripts/tests/, нет ссылок из доставляемого
+    "scripts/generate-helper-catalog.py"        # нет ссылок из доставляемого
+    "scripts/iwe-trace.py"                      # нет ссылок из доставляемого
+    "scripts/session-dispatcher-tsekh.py"       # нет ссылок из доставляемого
+    "scripts/iwe-catalog-list.py"               # ссылается только docs/maintaining-skills.md (сам dev-only)
+    "scripts/guide-kit-sync.sh"                 # author-only: заносит релиз iwesys/guide-kit в дерево шаблона (WP-483 Ф4)
 )
 
 EXCLUDED_EXACT=(
     "promotion-status.yaml"
-    "AGENTS-agent-blocks.md"
-    "docs/BROWSER-CI-TEMPLATE.md"
-    "docs/maintaining-skills.md"
-    "docs/release-audit-log.md"
+    "scripts/guide-kit-sync-state.yaml"         # provenance vendored-копии guide-kit/ — нужен CI drift-check, не пользователям
+    "${EXCLUDED_SCRIPTS[@]}"
 )
 
 # === Исключения из files, но не в excluded_paths (пользовательское пространство) ===
@@ -55,16 +86,102 @@ FILES_EXCLUDE_EXACT=(
     "README.en.md"
     "CONTRIBUTING.md"
     "LICENSE"
+    "CODE_OF_CONDUCT.md"
+    "SECURITY.md"
+    "PRIVACY.md"
+    "CODEOWNERS"
+    "CITATION.cff"
     "params.yaml"
+    "params.yaml.example"
     "extensions/day-close.after.md"
     "extensions/mcp-user.json"
 )
+
+# issue #325: .github/ и setup/ are blanket-excluded below (CI-only / install-time),
+# but cloud-scheduler is a documented, maintained feature living in both namespaces —
+# its workflow and install script never reached users despite fix #188. Explicit
+# per-file include, same technique as setup/validate-template.sh below.
+GITHUB_EXPLICIT_INCLUDE=(
+    ".github/workflows/cloud-scheduler.yml"
+    ".github/workflows/notify-security.yml"
+    ".github/workflows/notify-update.yml"
+    ".github/workflows/post-release-audit.yml"
+)
+GITHUB_CI_ONLY_EXCLUDE=(
+    ".github/workflows/nightly-template-audit.yml"
+)
+SETUP_EXPLICIT_INCLUDE=(
+    "setup/build-runtime.sh"
+    "setup/install-iwe-paths.sh"
+    "setup/validate-template.sh"
+    "setup/optional/setup-cloud-scheduler.sh"   # install-time, but requires one-time delivery — issue #325
+    "setup/optional/setup-local-gateway.sh"     # referenced by delivered docs/AGENT-VENDOR-SETUP.md (WP-499 Ф16), same class as #325
+)
+# WP-7 Ф-script-contract-gate: EXCLUDED_PATTERNS below still blanket-excludes
+# scripts/tests/ (correct default — it's mostly the author's own pytest suite,
+# dev-only, same reasoning as issue #246/#247 above but scoped to this one
+# directory instead of removed entirely). These paths are the exception —
+# the verification gate itself, meant to ship so a user's own template copy
+# can run it. Found live 03.08: without this list, generate-manifest.sh
+# silently dropped all 11 back into excluded_paths on every real run, even
+# though they'd been hand-added to files[] in an earlier commit — the next
+# real release would have shipped a template without its own test gate and
+# nobody would have noticed until a user hit the bug the gate exists to catch.
+SCRIPT_CONTRACT_EXPLICIT_INCLUDE=(
+    "scripts/tests/test_create_wp_registry_coherence.sh"
+    "scripts/tests/test_check_orphan_hooks.sh"
+    "scripts/tests/test_capture_bus_detector_timeout.sh"
+    "scripts/tests/test_critical_alert_disabled_tracker.sh"
+    "scripts/tests/test_create_wp_contract.sh"
+    "scripts/tests/test_capture_bus_contract.sh"
+    "scripts/tests/test_critical_alert_contract.sh"
+    "scripts/tests/test_create_wp_number_padding.py"
+    "scripts/tests/test_create_wp_weekplan_writer.py"
+    "scripts/tests/validate_manifest_coverage.sh"
+    "scripts/tests/lib/capture_fixture.sh"
+    "scripts/tests/lib/seed_strategy_fixture.sh"
+    "scripts/tests/test_critical_alert_failure_matrix.sh"
+    "scripts/tests/test_create_wp_repeat_and_cwd.sh"
+    "scripts/tests/test_create_wp_hypothesis_relation.sh"
+    "scripts/tests/test_day_close_lock_timezone.sh"
+    "scripts/tests/test_fresh_seed_reproduction.sh"
+    "scripts/tests/test_hook_classification.sh"
+    "scripts/tests/test_update_install_path_guard.sh"
+    "scripts/tests/test_update_deprecated_mirror_guard.sh"
+    "scripts/tests/test_update_settings_merge_drift.sh"
+    "scripts/tests/test_update_delivery_ref.sh"
+    "scripts/tests/test_upgrade_worktree_cleanup.sh"
+    "scripts/tests/test_issues_413_418.py"
+    "scripts/tests/test_session_guard_hypothesis_gate.sh"
+)
+
+is_explicit_include() {
+    local rel="$1"; shift
+    local item
+    for item in "$@"; do
+        [ "$rel" = "$item" ] && return 0
+    done
+    return 1
+}
 
 # Собираем файлы.
 FILES=()
 EXCLUDED_PATHS=()
 while IFS= read -r rel; do
     # Пропускаем мусор/инструментарий
+    if is_explicit_include "$rel" \
+        "${GITHUB_EXPLICIT_INCLUDE[@]}" \
+        "${SCRIPT_CONTRACT_EXPLICIT_INCLUDE[@]}"; then
+        FILES+=("$rel")
+        continue
+    fi
+    # .github/ is normally outside the delivery manifest.  Keep every tracked
+    # workflow explicitly classified, otherwise manifest-coverage correctly
+    # reports a silent delivery gap (#423).
+    if is_explicit_include "$rel" "${GITHUB_CI_ONLY_EXCLUDE[@]}"; then
+        EXCLUDED_PATHS+=("$rel")
+        continue
+    fi
     skip=false
     for pattern in "${SKIP_PATTERNS[@]}"; do
         case "$rel" in
@@ -74,9 +191,10 @@ while IFS= read -r rel; do
     [[ "$(basename "$rel")" == ".gitkeep" ]] && skip=true
     $skip && continue
 
-    # setup/ contains install-time scripts; skip all except validate-template.sh,
-    # which is referenced by .githooks/pre-commit and update.sh after delivery.
-    if [[ "$rel" == setup/* && "$rel" != "setup/validate-template.sh" ]]; then
+    # setup/ contains install-time scripts; skip all except explicit includes
+    # (validate-template.sh referenced by .githooks/pre-commit and update.sh
+    # after delivery; setup-cloud-scheduler.sh — see SETUP_EXPLICIT_INCLUDE above).
+    if [[ "$rel" == setup/* ]] && ! is_explicit_include "$rel" "${SETUP_EXPLICIT_INCLUDE[@]}"; then
         continue
     fi
 
@@ -133,15 +251,23 @@ printf '%s\n' "${EXCLUDED_PATHS[@]}" > "$TMPDIR/excluded.txt"
 
 # Генерируем JSON
 python3 -c "
+import hashlib
 import json
+from pathlib import Path
 
 files = [line.strip() for line in open('$TMPDIR/files.txt') if line.strip()]
 excluded = [line.strip() for line in open('$TMPDIR/excluded.txt') if line.strip()]
+root = Path('$SCRIPT_DIR')
+
+def manifest_entry(path):
+    digest = hashlib.sha256((root / path).read_bytes()).hexdigest()
+    return {'path': path, 'sha256': digest}
 
 data = {
+    'schema_version': 2,
     'version': '$VERSION',
     'description': 'Манифест платформенных файлов FMT-exocortex-template. Используется update.sh для доставки обновлений.',
-    'files': [{'path': p} for p in files],
+    'files': [manifest_entry(p) for p in files],
     'excluded_paths': excluded,
     'deprecated_files': json.loads('''$DEPRECATED_JSON'''),
 }

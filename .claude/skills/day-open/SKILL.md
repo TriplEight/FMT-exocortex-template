@@ -43,7 +43,7 @@ routing:
 
 **4c. Календарь** — `mcp__claude_ai_Google_Calendar__list_events` для каждого ID из `day-rhythm-config.yaml → calendar_ids`, диапазон 00:00–23:59 (Europe/Berlin). Объединить → секция «Календарь» (Встречи + Напоминания). `strategy_day`: диапазон 7 дней → «Календарь недели» в WeekPlan.
 
-**5. IWE за ночь** — `cd "$IWE_TEMPLATE" && bash update.sh --check` + Base-репо (FPF, SPF, ZP) на отставание от origin. Обновления + непроверенный Scout → «Требует внимания».
+**5. IWE за ночь** — `cd "$IWE_TEMPLATE" && bash update.sh --check --fast` + Base-репо (FPF, SPF, ZP) на отставание от origin. Обновления + непроверенный Scout → «Требует внимания».
 
 **5a2. Видео** — `video.enabled: true` → новые файлы за сегодня (`-mtime 0`). `false` → пропустить.
 
@@ -57,7 +57,7 @@ routing:
 
 **6c. Extensions (after)** — `bash .claude/scripts/load-extensions.sh day-open after` → Exit 0: выполнить. Exit 1: пропустить.
 
-**7. Запись** — ⚠️ перед 7a и 7d: `Read day-open/templates.md`. Не найден → стоп, сообщить пилоту.
+**7. Запись** — ⚠️ перед 7a и 7d: `Read day-open/templates.md`. Не найден → стоп, сообщить пилоту. `params.yaml → multiplier_enabled` (нет ключа = `true`); `false` → ветки `multiplier:off`: не выводить физическое время, WakaTime, плановый/фактический мультипликатор.
 - **7a.** `<governance-repo>/current/DayPlan YYYY-MM-DD.md` по шаблону. Предыдущий → `archive/day-plans/`.
 - **7a2.** `<governance-repo>/sessions/YYYY-MM-DD.md` — не перезаписывать если существует.
 - **7b.** `bash .claude/scripts/load-extensions.sh day-open checks` → БЛОКИРУЮЩЕЕ: commit только после прохождения.

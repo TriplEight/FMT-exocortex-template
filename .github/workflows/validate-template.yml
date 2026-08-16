@@ -8,6 +8,22 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # CI-MacOS-Costs (WP-7, 09.08.2026): macOS runners cost 10x an ubuntu-minute
+  # (GitHub Actions pricing) and every push to main ran the full os×gov_repo
+  # matrix — 196 runs/month, ~$13.4/mo gross just for this job. macOS coverage
+  # doesn't need to fire on every agentic commit to be effective; a nightly
+  # run plus every PR (external contributors, review gate) catches the same
+  # portability regressions this matrix exists for (0.28.12 BUG-2..4), just
+  # not within minutes of a push nobody's about to release from unreviewed.
+  schedule:
+    - cron: '0 2 * * *'  # 05:00 МСК
+  # WP-7 Ф62 (10.08.2026): weekly-release.yml коммитит version-bump через
+  # default GITHUB_TOKEN — по anti-recursion policy GitHub такой push НЕ
+  # триггерит push-based workflow сам по себе, поэтому weekly явно зовёт этот
+  # workflow через workflow_dispatch. release.yml подписан на его завершение
+  # (workflow_run) и берёт SHA из самого события — без этого входа CI на
+  # bot-коммите вообще не запускался бы, и релиз шёл бы непроверенным.
+  workflow_dispatch:
 
 jobs:
   # Defense-in-depth для случая --no-verify в pre-commit + прямого push.
@@ -16,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # WP-7 Ф62 п.4: нужна полная история для git diff (keyword-warning ниже)
       - name: Check CHANGELOG/manifest version sync
         run: |
           if [ ! -f "CHANGELOG.md" ] || [ ! -f "update-manifest.json" ]; then
@@ -42,35 +60,103 @@ jobs:
       - name: Check README version badge sync
         run: bash scripts/sync-version-badge.sh --check
 
+      # WP-7 Ф62 п.4: подстраховка от пропуска метки [security] при разметке
+      # CHANGELOG (allowlist/рендер — scripts/changelog-append.sh). Только
+      # предупреждение, никогда не блокирует — DRR:
+      # decisions/2026-08/2026-08-10-wp-7-arhgeyt-changelog-klassifikaciya-bez-lts.md
+      - name: Warn on unlabeled security-like CHANGELOG entries
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "SKIP: CHANGELOG.md не найден"
+            exit 0
+          fi
+
+          EVENT="${{ github.event_name }}"
+          if [ "$EVENT" = "push" ]; then
+            BASE="${{ github.event.before }}"
+          elif [ "$EVENT" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            echo "SKIP: событие '$EVENT' (schedule/workflow_dispatch) не несёт нового диапазона коммитов"
+            exit 0
+          fi
+
+          # Общая логика извлечения — scripts/changelog-diff-lines.sh
+          # (выделена из дублей в этом файле и notify-update.yml, code review
+          # 13.08: третье повторение одной и той же логики, DP.SC.172 P2).
+          NEW_LINES=$(bash scripts/changelog-diff-lines.sh "$BASE")
+
+          if [ -z "$NEW_LINES" ]; then
+            echo "PASS: нет новых строк CHANGELOG.md для проверки"
+            exit 0
+          fi
+
+          # Узкий список — голые "leak"/"credential" дают false-positive на
+          # рутинных багфиксах вроде "fix: memory leak" (пир-ревью с Codex,
+          # 2026-08-13).
+          PATTERN='vulnerability|CVE-[0-9]{4}-[0-9]+|exploit|credential leak|secret leak|token leak|data breach|privilege escalation|\bRCE\b'
+
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            # Якорим на позицию бирки-префикса, не голую подстроку — иначе
+            # "[migration] fix: ... CVE-2026-9999 in [security]-adjacent
+            # helper" молча проходит без предупреждения (найдено code review
+            # 13.08, verify-подагент).
+            if echo "$line" | grep -qiE "$PATTERN" && ! echo "$line" | grep -q '^- \[security\] '; then
+              echo "::warning file=CHANGELOG.md::возможно security-пункт без метки [security]: $line"
+            fi
+          done <<< "$NEW_LINES"
+
+          echo "PASS: проверка завершена (предупреждение — не блокировка)"
+
   # Integration contract validator + fresh-install smoke-test.
   # Defense-in-depth для случая `git commit --no-verify` в pre-commit.
   # Корень бага (29 апр, 0.29.13 регрессия): template-sync пропихнул pre-0.29.5
   # код в FMT, валидаторы НЕ были в CI — Євгений нашёл на fresh clone, у нас
   # commit прошёл. Гейт: те же 2 скрипта что Євгений запускает локально.
-  integration-contract:
-    # OS matrix (0.29.18): пилоты на macOS И Linux. CI на ubuntu-latest пропускал
-    # портабельность-баги (0.28.12 BUG-2..4 на Linux). Прогон на обеих ОС.
+  #
+  # Split ubuntu/macOS into two jobs (CI-MacOS-Costs, WP-7, 09.08.2026, вариант
+  # В1): macOS is 10x an ubuntu-minute in GitHub's billing, and every one of
+  # 196 push-to-main runs/month paid that rate for portability coverage that
+  # doesn't need to fire within minutes of an agentic commit to do its job.
+  # ubuntu below still runs on every push/PR (fast feedback for the common
+  # case); macOS runs on PR (review gate for external contributors) and
+  # nightly (catches a portability regression that slipped through by next
+  # morning) — same coverage cadence, ~80% fewer macOS-minutes billed.
+  integration-contract-ubuntu:
     # GOVERNANCE_REPO matrix (12 мая, после Bug 1 b24639f): smoke прогоняется с
     # разными значениями GOVERNANCE_REPO, чтобы поймать hardcoded /DS-strategy/
     # пути которые проходят при дефолтном значении.
-    # NB: validator+test-detectors дублируются 2× по gov_repo (4 прогона вместо 2)
-    # — не зависят от gov_repo, но изоляция в отдельный job усложнила бы yml.
-    # Trade-off приемлемый: оба скрипта быстрые (<10 сек суммарно).
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
         gov_repo: [DS-strategy, DS-pilot-strategy]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     env:
       SMOKE_GOVERNANCE_REPO: ${{ matrix.gov_repo }}
     steps:
       - uses: actions/checkout@v6
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y python3 jq
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
+      - name: Run integration-contract-validator (8 detectors)
+        run: bash setup/integration-contract-validator.sh
+      - name: Run smoke-test-fresh-install (GOVERNANCE_REPO=${{ matrix.gov_repo }})
+        run: bash setup/smoke-test-fresh-install.sh
+      - name: Run detector regression fixtures (regex gap guard)
+        run: bash setup/test-detectors.sh
+
+  integration-contract-macos:
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        gov_repo: [DS-strategy, DS-pilot-strategy]
+    runs-on: macos-latest
+    env:
+      SMOKE_GOVERNANCE_REPO: ${{ matrix.gov_repo }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install dependencies
         run: brew install jq  # python3 preinstalled
       - name: Run integration-contract-validator (8 detectors)
         run: bash setup/integration-contract-validator.sh
@@ -110,9 +196,16 @@ jobs:
           echo "sha=$PREV_SHA" >> $GITHUB_OUTPUT
           echo "ver=$PREV_VER" >> $GITHUB_OUTPUT
           echo "skip=false" >> $GITHUB_OUTPUT
+      - name: Check rename coverage (issue #218)
+        if: steps.prev.outputs.skip != 'true'
+        run: |
+          git show "${{ steps.prev.outputs.sha }}:update-manifest.json" > /tmp/prev-manifest.json
+          python3 scripts/check-manifest-rename-coverage.py /tmp/prev-manifest.json update-manifest.json
       - name: Upgrade simulation — checkout prev → smoke → checkout HEAD → validate
         if: steps.prev.outputs.skip != 'true'
         run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          CURRENT_REF=$(git symbolic-ref --quiet --short HEAD || true)
           # Шаг 1: build-runtime на предыдущей версии (имитация уже-установленного пилота).
           git checkout ${{ steps.prev.outputs.sha }}
           bash setup/smoke-test-fresh-install.sh > /tmp/prev_smoke.log 2>&1 || {
@@ -120,11 +213,92 @@ jobs:
             tail -20 /tmp/prev_smoke.log
           }
           # Шаг 2: возврат на HEAD, прогон ТЕКУЩЕГО validator + smoke.
+          # Старый smoke может менять tracked-файлы и оставлять untracked-мусор.
+          # Runner одноразовый: это состояние предыдущей версии нужно отбросить,
+          # а не переносить в проверку текущей.
+          git reset --hard
+          git clean -fd
           # Если HEAD-validator прошёл fresh + после prev-smoke build-runtime — upgrade OK.
-          git checkout -
+          if [ -n "$CURRENT_REF" ]; then
+            git checkout "$CURRENT_REF"
+          else
+            git checkout "$CURRENT_SHA"
+          fi
           bash setup/integration-contract-validator.sh
           bash setup/smoke-test-fresh-install.sh
           echo "PASS: upgrade ${{ steps.prev.outputs.ver }} → HEAD не ломает контракт"
+
+  # Vendored guide-kit copy: the tree under guide-kit/ is derived-only — a
+  # byte-identical slice of a tagged iwesys/guide-kit release, pinned by
+  # scripts/guide-kit-sync-state.yaml (WP-483 Ф4). In-place edits of the copy
+  # (the "edited the wrong clone" failure mode on dev machines) must go red
+  # here, not be discovered by users after delivery.
+  guide-kit-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check vendored guide-kit copy matches its pinned source tag
+        run: |
+          STATE=scripts/guide-kit-sync-state.yaml
+          if [ ! -f "$STATE" ] && [ ! -d guide-kit ]; then
+            echo "SKIP: guide-kit not vendored yet (no state file, no copy)"
+            exit 0
+          fi
+          if [ -f "$STATE" ] && [ ! -d guide-kit ]; then
+            echo "FAIL: $STATE present but guide-kit/ is missing — broken sync?"
+            exit 1
+          fi
+          if [ ! -f "$STATE" ] && [ -d guide-kit ]; then
+            echo "FAIL: guide-kit/ present without provenance ($STATE) — was scripts/guide-kit-sync.sh bypassed?"
+            exit 1
+          fi
+          SRC=$(grep -m1 '^source_repo:' "$STATE" | sed 's/^source_repo:[[:space:]]*//')
+          TAG=$(grep -m1 '^tag:' "$STATE" | sed 's/^tag:[[:space:]]*//')
+          if [ -z "$SRC" ] || [ -z "$TAG" ]; then
+            echo "FAIL: cannot parse source_repo/tag from $STATE"
+            exit 1
+          fi
+          TMP=$(mktemp -d)
+          git clone --quiet --depth 1 --branch "$TAG" "$SRC" "$TMP"
+          # A moved (force-retagged) upstream tag is a different failure than an
+          # in-place edit of the copy — without this check the diff below would
+          # blame the wrong side ("edited the copy") for an upstream re-tag.
+          PINNED=$(grep -m1 '^commit:' "$STATE" | sed 's/^commit:[[:space:]]*//')
+          ACTUAL=$(git -C "$TMP" rev-parse HEAD)
+          if [ -n "$PINNED" ] && [ "$PINNED" != "$ACTUAL" ]; then
+            echo "FAIL: tag $TAG was moved upstream (state pins $PINNED, tag now points to $ACTUAL)."
+            echo "  Re-run scripts/guide-kit-sync.sh to re-pin, or restore the original tag upstream."
+            exit 1
+          fi
+          rm -rf "$TMP/.git" "$TMP/.github"
+          if diff -r "$TMP" guide-kit; then
+            echo "PASS: guide-kit/ is byte-identical to $SRC@$TAG"
+          else
+            echo "FAIL: guide-kit/ drifted from $SRC@$TAG."
+            echo "  Never edit the copy in place — change the source repo, release a tag,"
+            echo "  re-run scripts/guide-kit-sync.sh."
+            exit 1
+          fi
+      # continue-on-error: freshness is advisory by design (consensus: warning,
+      # not a blocker) — a network hiccup in ls-remote must not redden main.
+      - name: Warn when a newer guide-kit release exists (freshness)
+        continue-on-error: true
+        run: |
+          STATE=scripts/guide-kit-sync-state.yaml
+          if [ ! -f "$STATE" ]; then
+            echo "SKIP: guide-kit not vendored yet"
+            exit 0
+          fi
+          SRC=$(grep -m1 '^source_repo:' "$STATE" | sed 's/^source_repo:[[:space:]]*//')
+          TAG=$(grep -m1 '^tag:' "$STATE" | sed 's/^tag:[[:space:]]*//')
+          # Stable releases only — sort -V ranks v0.2.0-rc1 above v0.2.0.
+          LATEST=$(git ls-remote --tags --refs "$SRC" | awk -F/ '{print $NF}' \
+            | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          if [ -n "$LATEST" ] && [ "$LATEST" != "$TAG" ]; then
+            echo "::warning::vendored guide-kit is at $TAG, latest release is $LATEST — run scripts/guide-kit-sync.sh"
+          else
+            echo "PASS: vendored guide-kit is at the latest release ($TAG)"
+          fi
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -140,13 +314,27 @@ jobs:
           # Пред-существующие warnings (SC2034 unused vars от export-pattern, SC1090
           # source non-constant, SC2155 declare-and-assign, etc) — информативны,
           # не блокируют. При желании ужесточить — поднять до warning.
+          # guide-kit/ is a vendored byte-identical release slice (WP-483) —
+          # the drift gate forbids in-place fixes, so linting it here would
+          # deadlock two blocking gates; upstream CI lints the source instead.
           FAIL=0
           while IFS= read -r -d '' f; do
             if ! shellcheck -S error "$f"; then
               FAIL=1
             fi
-          done < <(find . -name "*.sh" -type f -print0)
+          done < <(find . -path ./guide-kit -prune -o -name "*.sh" -type f -print0)
           exit $FAIL
+
+  # WP-5 Ubuntu-audit факт #4/#6: docs/PLATFORM-COMPAT.md listed the safe
+  # patterns for macOS-only constructs (osascript, launchctl, date -v, etc.)
+  # but nothing enforced them — every concrete bug this audit found was a
+  # case the checklist already named. Turns the checklist into a gate.
+  platform-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check docs/PLATFORM-COMPAT.md constructs are guarded
+        run: bash scripts/check-platform-compat.sh
 
   validate:
     runs-on: ubuntu-latest
@@ -168,6 +356,13 @@ jobs:
       # только при staged .claude/settings.json) и ручной запуск.
       - name: Run validate-fmt-scripts (author-specific hardcodes & conventions)
         run: bash scripts/validate-fmt-scripts.sh
+
+      # issue #291: путь в бэктиках платформенной части CLAUDE.md (start..SYNC-CORE-END,
+      # доставляется на 100% установок через update.sh §1-7 + Agent Core) обязан
+      # существовать в репо или в update-manifest.json — иначе это мёртвая ссылка на
+      # каждой пользовательской установке, не только у автора.
+      - name: Check CLAUDE.md platform-section links resolve (issue #291)
+        run: python3 scripts/check-claude-md-links.py --strict
 
       # CI-only check: MCP — серверы подключаются через claude.ai/settings/connectors
       - name: Check MCP documentation
@@ -255,6 +450,50 @@ jobs:
       - name: Check manifest completeness (B2)
         run: |
           bash scripts/verify-manifest.sh
+
+      # setup.sh ↔ update.sh parity. Root (29 июня, peer-session 2026-06-29-03):
+      # rules-lazy доставлялся через update.sh, но отсутствовал в setup.sh for-loop —
+      # fresh install терял компонент. check-setup-update-parity существовал (WP-315),
+      # но НЕ был подключён к CI (dormant guard), а его regex-контракт не покрывал
+      # измерение «список компонентов». Подключаем оба: контракт-паттерны + set-diff.
+      - name: Check setup/update parity contract
+        run: bash scripts/check-setup-update-parity.sh
+      - name: Check setup/update component-set parity
+        run: bash scripts/check-component-parity.sh
+
+      # seed-снапшоты (WP-5 Ubuntu-audit, 2026-07-22 факт #3): script-promote.sh
+      # промотирует личный скрипт → scripts/, но НЕ пишет в seed/strategy/scripts/ —
+      # без этого гейта дрейф молчит, пока новый пользователь не упрётся в старый
+      # пайплайн (нашлось: day-open-pipeline.sh/scaffold.sh разошлись на сотни строк).
+      - name: Check seed snapshots match scripts/ (drift guard)
+        run: bash scripts/check-seed-drift.sh
+
+      # issue #343/#347: 14 регрессионных тестов лежали в репо и не запускались нигде —
+      # ни один из них не сторожил ни один прогон. Полный набор идёт ~2 минуты.
+      - name: Run update.sh edge-case regression tests (T1-T26)
+        run: bash setup/test-update-edge-cases.sh
+
+      # issue #226: тест лежал в репо с 6 июля, ни разу не был подключён к CI —
+      # найдено 2026-08-10 при аудите конвейера доставки (WP-7 Ф62). E2E smoke на
+      # 3 фиксах реального инцидента (конфликт CLAUDE.md при merge, repair-pass
+      # при TOTAL_CHANGES=0) — сторожит именно тот класс регрессии, что уже был.
+      - name: Run update.sh issue #226 regression test
+        run: bash setup/test-update-issue-226.sh
+
+      # PR #385: cloud install paths may occur legitimately in old tracked text;
+      # only additions made by the current updater run are publication blockers.
+      - name: Test staged install-path guard
+        run: bash scripts/tests/test_update_install_path_guard.sh
+
+      # issue #310/#323: хук-страж, не зарегистрированный ни в одном событии, не
+      # срабатывает никогда — и «не сработал» неотличимо от «нарушений не было».
+      - name: Check every hook is actually wired (orphan-hook guard)
+        run: bash scripts/check-orphan-hooks.sh
+
+      # Сам сторож тоже под тестом: оба пути распознавания (маркер claude-hook: false
+      # и .orphan-allowlist) плюс гарантия, что настоящая сирота всё ещё валит проверку.
+      - name: Test the orphan-hook guard itself (marker + allowlist + real orphan)
+        run: bash scripts/tests/test_check_orphan_hooks.sh
 
       # 7. Только допустимые placeholders
       - name: Check placeholders are valid
