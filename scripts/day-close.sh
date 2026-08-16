@@ -18,18 +18,21 @@
 set -euo pipefail
 
 # === КОНФИГУРАЦИЯ (настроить при установке) ===
+# Load unified environment: WORKSPACE_DIR, IWE_ROOT, IWE_SCRIPTS, etc.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/../.claude/lib/iwe-env-bootstrap.sh" || exit 1
 GOVERNANCE_REPO="${GOVERNANCE_REPO:-${IWE_GOVERNANCE_REPO:-DS-strategy}}"
 DS_STRATEGY="$WORKSPACE_DIR/$GOVERNANCE_REPO"
-# Slug = $HOME с '/' → '-' (macOS: /Users/x → -Users-x; Linux/WSL: /home/x → -home-x).
-# Переопределить можно через env IWE_MEMORY_SRC (например, для нестандартного $HOME).
-HOME_SLUG=$(echo "$HOME" | tr '/' '-')
-MEMORY_SRC="${IWE_MEMORY_SRC:-$HOME/.claude/projects/${HOME_SLUG}-IWE/memory}"
+# Slug derived from WORKSPACE_DIR (not $HOME) so it matches Claude's project key
+# regardless of workspace location. Override via IWE_MEMORY_SRC if needed.
+WORKSPACE_SLUG=$(echo "$WORKSPACE_DIR" | tr '/_ ' '-')
+MEMORY_SRC="${IWE_MEMORY_SRC:-$HOME/.claude/projects/${WORKSPACE_SLUG}/memory}"
 EXOCORTEX_DST="$DS_STRATEGY/exocortex"
 # MCP reindex — опциональный компонент (WP-187 iwe-knowledge Gateway заменяет локальный knowledge-mcp).
 # Переопределить путь можно через env IWE_SELECTIVE_REINDEX.
+# do_reindex() exit code for "some branches indexed, some failed" (see do_reindex).
+readonly RC_REINDEX_PARTIAL=3
 SELECTIVE_REINDEX="${IWE_SELECTIVE_REINDEX:-$WORKSPACE_DIR/DS-MCP/knowledge-mcp/scripts/selective-reindex.sh}"
 SOURCES_JSON="${IWE_SOURCES_JSON:-$WORKSPACE_DIR/DS-MCP/knowledge-mcp/scripts/sources.json}"
 SOURCES_PERSONAL_JSON="${IWE_SOURCES_PERSONAL_JSON:-$WORKSPACE_DIR/DS-MCP/knowledge-mcp/scripts/sources-personal.json}"
@@ -73,15 +76,40 @@ do_backup() {
   fi
 
   # Mirror *.md/*.yaml/*.yml from auto-memory; --delete prunes files removed upstream.
+  # exocortex/ is a multi-writer destination: extensions/, fault-profile, hindsight,
+  # and legacy decision logs are primary data written by other platform mechanisms.
+  # Root-anchored excludes are therefore ownership boundaries, not copy masks. Rsync
+  # protects excluded receiver paths from --delete unless --delete-excluded is used.
   # CLAUDE.md is excluded so the workspace copy below isn't deleted by --delete.
+  # -L (copy-links) dereferences symlinks so target content is copied, not the link —
+  # prevents a self-referencing ELOOP symlink from recurring here (WP-7 DOC8).
   # day-rhythm-config.yaml is excluded here and handled separately via merge (see below)
   # to preserve user-configured keys (e.g. calendar_ids) from being overwritten by template defaults.
-  rsync -a --delete \
+  # issue #343: --include='*/' must come first — without it the trailing --exclude='*'
+  # also excludes directories, so rsync never descends into memory/ subfolders and the
+  # backup silently misses e.g. memory/reference/agent-core.md while reporting success.
+  # -m goes with it: --include='*/' alone recreates the source's ENTIRE directory tree
+  # in the backup, including .git/ internals whose files the final --exclude drops —
+  # hundreds of empty dirs plus a fake exocortex/.git. -m prunes the empty ones.
+  rsync -aLm --delete \
     --exclude='CLAUDE.md' \
     --exclude='day-rhythm-config.yaml' \
+    --exclude='/extensions/***' \
+    --exclude='/agent-fault-profile/***' \
+    --exclude='/hindsight/***' \
+    --exclude='/decisions/***' \
+    --exclude='/rules/***' \
+    --include='*/' \
     --include='*.md' --include='*.yaml' --include='*.yml' \
     --exclude='*' \
     "$MEMORY_SRC/" "$EXOCORTEX_DST/"
+
+  # #380: rules may carry an explicitly legal USER-SPACE block. Mirror them to
+  # a dedicated subtree so recovery never confuses platform rules with memory.
+  if [ -d "$WORKSPACE_DIR/.claude/rules" ]; then
+    mkdir -p "$EXOCORTEX_DST/rules"
+    rsync -a --delete "$WORKSPACE_DIR/.claude/rules/" "$EXOCORTEX_DST/rules/"
+  fi
 
   # Merge day-rhythm-config.yaml: use auto-memory as base, preserve non-empty user values in dst.
   # User-configurable keys protected: day_open.calendar_ids
@@ -115,17 +143,35 @@ PYEOF
     fi
   fi
 
+  # issue #217: обратная подстановка $HOME -> {{HOME_DIR}} делает бэкап ОС-агностичным
+  # (симметрично прямой подстановке в setup.sh и restore-from-exocortex.sh).
   if [ -f "$WORKSPACE_DIR/CLAUDE.md" ]; then
-    cp "$WORKSPACE_DIR/CLAUDE.md" "$EXOCORTEX_DST/CLAUDE.md"
+    sed "s|$HOME|{{HOME_DIR}}|g" "$WORKSPACE_DIR/CLAUDE.md" > "$EXOCORTEX_DST/CLAUDE.md"
   fi
 
   if [ -f "$WORKSPACE_DIR/AGENTS.md" ]; then
-    cp "$WORKSPACE_DIR/AGENTS.md" "$EXOCORTEX_DST/AGENTS.md"
+    sed "s|$HOME|{{HOME_DIR}}|g" "$WORKSPACE_DIR/AGENTS.md" > "$EXOCORTEX_DST/AGENTS.md"
   fi
 
   local count
   count=$(find "$EXOCORTEX_DST" -maxdepth 1 -type f \( -name '*.md' -o -name '*.yaml' -o -name '*.yml' \) | wc -l | tr -d ' ')
   log "  Синхронизировано: $count файлов → $EXOCORTEX_DST/"
+}
+
+# iwe_repo_dirs — печатает поддиректории с .git, дедуплицированные по реальному
+# физическому пути (repo-symlink алиас иначе считается отдельным репозиторием
+# наравне с оригиналом — двойной reindex одного источника, найдено 2026-07-17).
+iwe_repo_dirs() {
+  local repo real seen=""
+  for repo in "$@"; do
+    [ -d "$repo/.git" ] || continue
+    real=$(cd -P "$repo" 2>/dev/null && pwd) || continue
+    case " $seen " in
+      *" $real "*) continue ;;
+    esac
+    seen="$seen $real"
+    echo "$repo"
+  done
 }
 
 # --- Шаг 2: Knowledge-MCP reindex ---
@@ -157,8 +203,7 @@ PYEOF
 
   # Определяем, какие Pack/DS были изменены сегодня
   local l2_sources="" l4_sources=""
-  for repo in "$WORKSPACE_DIR"/PACK-* "$WORKSPACE_DIR"/DS-*; do
-    [ -d "$repo/.git" ] || continue
+  while IFS= read -r repo; do
     local repo_name
     repo_name=$(basename "$repo")
     local today_commits
@@ -179,25 +224,50 @@ PYEOF
         log "  ⚠ $repo_name: не в sources — пропуск"
       fi
     fi
-  done
+  done < <(iwe_repo_dirs "$WORKSPACE_DIR"/PACK-* "$WORKSPACE_DIR"/DS-*)
 
   if [ -z "$l2_sources" ] && [ -z "$l4_sources" ]; then
     log "  Нет изменений в индексируемых источниках — пропуск reindex"
     return 0
   fi
 
+  # Each call keeps its own exit code: under `set -e` a bare failing call would abort
+  # do_reindex() before the next step ever runs, and collapsing both into one status
+  # blocks the whole Day Close on a single failed branch (WP-7 02.08 — 31.07 and 01.08
+  # stalled on a failed L4 while L2 had already indexed 3078/2116 docs).
+  local l2_rc=0 l4_rc=0 ran=0 failed=0
+
   # Вызов 1: L2 источники (sources.json — дефолт selective-reindex)
   if [ -n "$l2_sources" ]; then
     log "  L2 источники:$l2_sources"
+    ran=$((ran + 1))
     # shellcheck disable=SC2086
-    "$SELECTIVE_REINDEX" $l2_sources
+    "$SELECTIVE_REINDEX" $l2_sources || l2_rc=$?
+    if [ "$l2_rc" -ne 0 ]; then
+      failed=$((failed + 1))
+      warn "  L2 reindex отказал (код $l2_rc)"
+    fi
   fi
 
   # Вызов 2: L4 источники (sources-personal.json через SOURCES_CONFIG)
   if [ -n "$l4_sources" ]; then
     log "  L4 источники:$l4_sources"
+    ran=$((ran + 1))
     # shellcheck disable=SC2086
-    SOURCES_CONFIG="$SOURCES_PERSONAL_JSON" "$SELECTIVE_REINDEX" $l4_sources
+    SOURCES_CONFIG="$SOURCES_PERSONAL_JSON" "$SELECTIVE_REINDEX" $l4_sources || l4_rc=$?
+    if [ "$l4_rc" -ne 0 ]; then
+      failed=$((failed + 1))
+      warn "  L4 reindex отказал (код $l4_rc)"
+    fi
+  fi
+
+  if [ "$failed" -eq 0 ]; then
+    return 0
+  elif [ "$failed" -lt "$ran" ]; then
+    warn "  reindex: отказала часть веток ($failed из $ran) — Day Close продолжается"
+    return "$RC_REINDEX_PARTIAL"
+  else
+    return 1
   fi
 }
 
@@ -350,7 +420,13 @@ main() {
   fi
 
   if $run_reindex; then
-    if do_reindex; then reindex_status="ok"; else reindex_status="fail"; fi
+    local reindex_rc=0
+    do_reindex || reindex_rc=$?
+    case "$reindex_rc" in
+      0)                     reindex_status="ok" ;;
+      "$RC_REINDEX_PARTIAL") reindex_status="partial" ;;
+      *)                     reindex_status="fail" ;;
+    esac
   fi
 
   if $run_linear; then

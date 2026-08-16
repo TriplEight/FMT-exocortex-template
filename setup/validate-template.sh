@@ -7,7 +7,7 @@
 #                         (/Users/ подставлен, /opt/homebrew в CLAUDE_PATH, MEMORY заполняется работой).
 #                         Используется setup.sh --validate как делегат структурных чеков.
 #
-# 7 проверок:
+# 8 проверок:
 # 1. Нет автор-специфичного контента                              [pristine + installed]
 # 2. Нет захардкоженных путей /Users/                             [pristine only]
 # 3. Нет захардкоженных путей /opt/homebrew                       [pristine only]
@@ -15,6 +15,7 @@
 # 5. Обязательные файлы существуют                                [pristine + installed]
 # 6. Нет хардкод-путей к FMT/scripts|roles в протоколах (WP-219)  [pristine + installed]
 # 7. settings.json hooks ↔ .claude/hooks/ cross-ref (issue #13)   [pristine + installed]
+# 8. Нет устаревших семантических ссылок FPF                     [pristine + staged]
 
 set -euo pipefail
 
@@ -86,6 +87,9 @@ echo -n "[1/5] Author-specific content... "
 CHECK1_FAIL=0
 
 # Глобальные (запрет везде, кроме CHANGELOG и GitHub URLs)
+# grep -i ниже (все вызовы этого паттерна): "tserentserenov" всегда встречался в
+# коде как "TserenTserenov" (mixed-case) — case-sensitive grep никогда не ловил
+# его, поймано только парным паттерном "DS-my-strategy" на тех же строках (2026-07-27).
 for pattern in "tserentserenov" "PACK-MIM" "aist_bot_newarchitecture" \
                "DS-Knowledge-Index-Tseren" "DS-IT-systems" "DS-ai-systems" \
                "DS-my-strategy" "engines/tailor"; do
@@ -95,25 +99,37 @@ for pattern in "tserentserenov" "PACK-MIM" "aist_bot_newarchitecture" \
         hits=""
         while IFS= read -r f; do
             case "$f" in
+                guide-kit/*) continue ;;  # vendored copy is derived-only (WP-483) — checked by its upstream CI
+            esac
+            case "$f" in
                 *.md|*.sh|*.py|*.json|*.plist|*.yaml) ;;
                 *) continue ;;
             esac
             case "$(basename "$f")" in
-                validate-template.sh|LEARNING-PATH.md|CHANGELOG.md) continue ;;
+                validate-template.sh|LEARNING-PATH.md|CHANGELOG.md|aisystant-sync-targets.yaml|translation-manifest.yaml) continue ;;
+            esac
+            # issue #308: docs/adr/* — historical ADR docs describing the past
+            # authorial install, same exemption class as LEARNING-PATH.md/CHANGELOG.md above.
+            case "$f" in
+                docs/adr/*) continue ;;
             esac
             file_hits=$(cd "$TEMPLATE_DIR" && git show ":$f" 2>/dev/null \
-                | grep -n "$pattern" | grep -v 'github.com/' | grep -v 'docs/adr/' || true)
+                | grep -in "$pattern" | grep -v 'github.com/' | grep -v 'docs/adr/' \
+                | grep -v 'githubusercontent\.com' \
+                | grep -viE 'TserenTserenov/(FMT-exocortex-template|ZP|SPF)' || true)
             if [ -n "$file_hits" ]; then
                 count=$((count + $(echo "$file_hits" | wc -l | tr -d ' ')))
                 hits="${hits}${f}:"$'\n'"${file_hits}"$'\n'
             fi
         done <<< "$STAGED_FILES"
     else
-        count=$(grep -rn "$pattern" "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
+        count=$(grep -rin "$pattern" "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
                 --include="*.py" --include="*.json" --include="*.plist" --include="*.yaml" \
                 --exclude='validate-template.sh' --exclude='LEARNING-PATH.md' \
-                --exclude='CHANGELOG.md' 2>/dev/null \
-                | grep -v 'github.com/' | grep -v 'docs/adr/' | wc -l | tr -d ' ' || true)
+                --exclude='CHANGELOG.md' --exclude='aisystant-sync-targets.yaml' \
+                --exclude='translation-manifest.yaml' --exclude-dir='guide-kit' 2>/dev/null \
+                | grep -v 'github.com/' | grep -v 'docs/adr/' | grep -v 'githubusercontent\.com' \
+                | grep -viE 'TserenTserenov/(FMT-exocortex-template|ZP|SPF)' | wc -l | tr -d ' ' || true)
     fi
     if [ "$count" -gt 0 ]; then
         [ "$CHECK1_FAIL" -eq 0 ] && echo "FAIL"
@@ -121,11 +137,13 @@ for pattern in "tserentserenov" "PACK-MIM" "aist_bot_newarchitecture" \
         if [ "$MODE" = "staged" ]; then
             echo "$hits" | head -3 || true
         else
-            grep -rn "$pattern" "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
+            grep -rin "$pattern" "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
                 --include="*.py" --include="*.json" --include="*.plist" \
                 --exclude='validate-template.sh' --exclude='LEARNING-PATH.md' \
-                --exclude='CHANGELOG.md' 2>/dev/null \
-                | grep -v 'github.com/' | grep -v 'docs/adr/' | head -3 || true
+                --exclude='CHANGELOG.md' --exclude='aisystant-sync-targets.yaml' \
+                --exclude='translation-manifest.yaml' --exclude-dir='guide-kit' 2>/dev/null \
+                | grep -v 'github.com/' | grep -v 'docs/adr/' | grep -v 'githubusercontent\.com' \
+                | grep -viE 'TserenTserenov/(FMT-exocortex-template|ZP|SPF)' | head -3 || true
         fi
         CHECK1_FAIL=1
         FAIL=1
@@ -173,7 +191,7 @@ done
 if [ "$MODE" = "staged" ] && [ "$(cd "$TEMPLATE_DIR" && git status --porcelain 2>/dev/null | grep -c '^.M')" -gt 0 ]; then
     UNSTAGED_WARN=0
     for pattern in "tserentserenov" "PACK-MIM" "aist_bot_newarchitecture" "DS-IT-systems"; do
-        warn_count=$(grep -rn "$pattern" "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
+        warn_count=$(grep -rin "$pattern" "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
                      --include="*.py" --include="*.yaml" \
                      --exclude='validate-template.sh' --exclude='CHANGELOG.md' 2>/dev/null \
                      | grep -v 'github.com/' | wc -l | tr -d ' ' || true)
@@ -185,14 +203,60 @@ if [ "$MODE" = "staged" ] && [ "$(cd "$TEMPLATE_DIR" && git status --porcelain 2
 fi
 [ "$CHECK1_FAIL" -eq 0 ] && echo "PASS"
 
-# 2. Нет захардкоженных /Users/ путей [pristine only]
+# Общий список расширений для чеков 2 и 3 (issue #247 п.2: count и print раньше
+# сканировали разные наборы --include, из-за чего FAIL (N hits) мог не показать
+# ни одной строки, если попадание было только в *.json/*.plist).
+# --exclude-dir=guide-kit: vendored byte-identical release slice (WP-483) —
+# the CI drift gate forbids in-place edits, so scanning it here would deadlock
+# two blocking gates; its own upstream CI is responsible for content checks.
+HARDCODE_SCAN_INCLUDES=(--include="*.md" --include="*.sh" --include="*.json" --include="*.plist" --exclude-dir="guide-kit")
+
+# Staged-режим для чеков 2/3: сканировать только staged-содержимое перечисленных
+# в STAGED_FILES файлов (git show ":$f"), не весь $TEMPLATE_DIR — то же исправление,
+# что уже применено к чеку 1 выше (issue #330: staged заявлял "checks ONLY staged
+# files" в своём --help, но фактически сканировал весь репозиторий).
+# Печатает совпадение-count в stdout, построчные hits — в файл $3.
+hardcode_scan_staged() {
+    local pattern="$1" exclude_re="$2" hits_file="$3"
+    local f file_hits count=0
+    : > "$hits_file"
+    while IFS= read -r f; do
+        case "$f" in
+            */validate-template.sh|validate-template.sh|*/setup.sh|setup.sh|CHANGELOG.md) continue ;;
+        esac
+        case "$f" in
+            *.md|*.sh|*.json|*.plist) ;;
+            *) continue ;;
+        esac
+        case "$f" in guide-kit/*) continue ;; esac
+        file_hits=$(cd "$TEMPLATE_DIR" && git show ":$f" 2>/dev/null | grep -n "$pattern" \
+            | { [ -n "$exclude_re" ] && grep -vE "$exclude_re" || cat; } || true)
+        if [ -n "$file_hits" ]; then
+            count=$((count + $(echo "$file_hits" | wc -l | tr -d ' ')))
+            { echo "${f}:"; echo "$file_hits"; } >> "$hits_file"
+        fi
+    done <<< "$STAGED_FILES"
+    echo "$count"
+}
+
+# 2. Нет захардкоженных /Users/ путей [pristine + staged; skip только installed]
 # В installed-режиме setup.sh легитимно подставил $WORKSPACE_DIR → /Users/<user>/...
 echo -n "[2/5] Hardcoded /Users/ paths... "
 if [ "$MODE" = "installed" ]; then
     echo "SKIP (installed mode — /Users/ подставлен setup'ом)"
+elif [ "$MODE" = "staged" ]; then
+    TMPDIR_CHECK2_HITS_FILE="$(mktemp)"
+    count=$(hardcode_scan_staged '/Users/' '/Users/\.\.\./|# .*(/Users/|e\.g\.)' "$TMPDIR_CHECK2_HITS_FILE")
+    if [ "$count" -gt 0 ]; then
+        echo "FAIL ($count hits)"
+        head -3 "$TMPDIR_CHECK2_HITS_FILE" || true
+        FAIL=1
+    else
+        echo "PASS"
+    fi
+    rm -f "$TMPDIR_CHECK2_HITS_FILE"
 else
-    count=$(grep -rn '/Users/' "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
-            --include="*.json" --include="*.plist" \
+    count=$(grep -rn '/Users/' "$TEMPLATE_DIR" "${HARDCODE_SCAN_INCLUDES[@]}" \
             --exclude='validate-template.sh' --exclude='setup.sh' \
             --exclude='CHANGELOG.md' 2>/dev/null \
             | grep -v '/Users/\.\.\./' \
@@ -200,7 +264,7 @@ else
             | wc -l | tr -d ' ' || true)
     if [ "$count" -gt 0 ]; then
         echo "FAIL ($count hits)"
-        grep -rn '/Users/' "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
+        grep -rn '/Users/' "$TEMPLATE_DIR" "${HARDCODE_SCAN_INCLUDES[@]}" \
             --exclude='validate-template.sh' --exclude='setup.sh' \
             --exclude='CHANGELOG.md' 2>/dev/null \
             | grep -v '/Users/\.\.\./' \
@@ -211,14 +275,24 @@ else
     fi
 fi
 
-# 3. Нет захардкоженных /opt/homebrew путей [pristine only]
+# 3. Нет захардкоженных /opt/homebrew путей [pristine + staged; skip только installed]
 # В installed-режиме CLAUDE_PATH=/opt/homebrew/bin/claude — легитимная подстановка.
 echo -n "[3/5] Hardcoded /opt/homebrew paths... "
 if [ "$MODE" = "installed" ]; then
     echo "SKIP (installed mode — CLAUDE_PATH может быть /opt/homebrew/...)"
+elif [ "$MODE" = "staged" ]; then
+    TMPDIR_CHECK3_HITS_FILE="$(mktemp)"
+    count=$(hardcode_scan_staged '/opt/homebrew' 'README\.md|PLATFORM-COMPAT\.md|validate-template\.yml|/usr/local/bin.*:/opt/homebrew' "$TMPDIR_CHECK3_HITS_FILE")
+    if [ "$count" -gt 0 ]; then
+        echo "FAIL ($count hits)"
+        head -3 "$TMPDIR_CHECK3_HITS_FILE" || true
+        FAIL=1
+    else
+        echo "PASS"
+    fi
+    rm -f "$TMPDIR_CHECK3_HITS_FILE"
 else
-    count=$(grep -rn '/opt/homebrew' "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
-            --include="*.json" --include="*.plist" \
+    count=$(grep -rn '/opt/homebrew' "$TEMPLATE_DIR" "${HARDCODE_SCAN_INCLUDES[@]}" \
             --exclude='validate-template.sh' --exclude='setup.sh' \
             --exclude='CHANGELOG.md' 2>/dev/null \
             | grep -v 'README.md' \
@@ -228,7 +302,7 @@ else
             | wc -l | tr -d ' ' || true)
     if [ "$count" -gt 0 ]; then
         echo "FAIL ($count hits)"
-        grep -rn '/opt/homebrew' "$TEMPLATE_DIR" --include="*.md" --include="*.sh" \
+        grep -rn '/opt/homebrew' "$TEMPLATE_DIR" "${HARDCODE_SCAN_INCLUDES[@]}" \
             --exclude='validate-template.sh' --exclude='setup.sh' \
             --exclude='CHANGELOG.md' 2>/dev/null \
             | grep -v 'README.md' | grep -v 'PLATFORM-COMPAT.md' \
@@ -342,6 +416,11 @@ else
     for hook in "$HOOKS_DIR"/*.sh; do
         [ -f "$hook" ] || continue
         name=$(basename "$hook")
+        # Каталог исторически содержит не только Claude hooks. Не угадываем по
+        # имени: самостоятельный сервис/CLI/библиотека обязан явно объявить
+        # контракт в собственной шапке. Новый неклассифицированный файл всё
+        # равно даст warning и потребует решения владельца.
+        grep -q '^# claude-hook: false — ' "$hook" && continue
         # Skip known user-deployed hooks (see .claude/skills/setup-wakatime/SKILL.md)
         skip=0
         for ud in "${USER_DEPLOYED_HOOKS[@]}"; do [ "$name" = "$ud" ] && skip=1 && break; done
@@ -355,6 +434,44 @@ else
         fi
     done
     [ "$CHECK7_FAIL" -eq 0 ] && [ "$ORPHAN_WARN" -eq 0 ] && echo "PASS"
+fi
+
+# 8. Устаревшие семантические ссылки FPF (issue #390 follow-up).
+# A.2 и A.2.1 сами по себе действительны для ролей и назначений. Запрещены только
+# две доказанно ложные привязки: удалённая A.6.8 и трактовка слова mastery/
+# «мастерство» как сущности A.2. В installed-режиме пользовательская память может
+# содержать исторические цитаты, поэтому проверка относится только к поставляемому
+# pristine/staged шаблону.
+echo -n "[8/8] Obsolete FPF semantic references... "
+if [ "$MODE" = "installed" ]; then
+    echo "SKIP (installed mode — пользовательская память может содержать исторические цитаты)"
+else
+    FPF_STALE_PATTERN='A\.6\.8|(mastery|мастерство).*A\.2([^0-9.]|$)'
+    FPF_STALE_HITS=""
+    if [ "$MODE" = "staged" ]; then
+        while IFS= read -r f; do
+            case "$f" in
+                memory/*.md|.claude/*.md|.claude/*/*.md|.claude/*/*/*.md|docs/*.md)
+                    hits=$(git -C "$TEMPLATE_DIR" show ":$f" 2>/dev/null \
+                        | grep -niE "$FPF_STALE_PATTERN" \
+                        | sed "s#^#$f:#" || true)
+                    [ -n "$hits" ] && FPF_STALE_HITS="${FPF_STALE_HITS}${FPF_STALE_HITS:+$'\n'}$hits"
+                    ;;
+            esac
+        done <<<"$STAGED_FILES"
+    else
+        FPF_STALE_HITS=$(grep -rniE "$FPF_STALE_PATTERN" \
+            "$TEMPLATE_DIR/memory" "$TEMPLATE_DIR/.claude" "$TEMPLATE_DIR/docs" \
+            --include='*.md' 2>/dev/null || true)
+    fi
+
+    if [ -n "$FPF_STALE_HITS" ]; then
+        echo "FAIL"
+        echo "$FPF_STALE_HITS" | sed 's/^/  /'
+        FAIL=1
+    else
+        echo "PASS"
+    fi
 fi
 
 echo ""
