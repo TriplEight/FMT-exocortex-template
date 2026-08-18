@@ -52,6 +52,10 @@
       "sha256": "54bae311bfe6a014b9a9382f6cee18a30c052dfb6a12c86de3b2c0f8b2611dd3"
     },
     {
+      "path": ".claude/hooks/check-pii-in-platform.sh",
+      "sha256": "9daa3ec92f88caf5c8be93612cb02beb84292bcb4c39e8d18409a5689fb0b665"
+    },
+    {
       "path": ".claude/hooks/check-trash.sh",
       "sha256": "7378e1f310161a2103ab413c1d39d150c2fb88ef2ff0f4e76d8958e0a50c3921"
     },
@@ -249,7 +253,7 @@
     },
     {
       "path": ".claude/scripts/memory-drift-scan.py",
-      "sha256": "3a6b84fe9753a6c134afdf057dd005bfbcc6f6863e8d2022cc808b0fca82065c"
+      "sha256": "0ba8c9827de0d2d89889d6151c3912a75bcca3c6b965d9b74787ef98de4c0c2a"
     },
     {
       "path": ".claude/scripts/settings-merge-apply.sh",
@@ -1913,7 +1917,7 @@
     },
     {
       "path": "scripts/claude-peer-adapter.sh",
-      "sha256": "75d882d3671f1a87c2b082b94a5952794bf8cf01c52451484ef40f488361e48f"
+      "sha256": "e77e76d34ed89227d54bfafbffd4550d6603301bbe7a4e3a6707ad4e2c99eb14"
     },
     {
       "path": "scripts/close-wp.sh",
@@ -2368,20 +2372,12 @@
       "sha256": "f8459d2cf2c065888d7e80d285a372166c6d88503c89c05a47409234b1171588"
     },
     {
-      "path": "scripts/tests/test_hindsight_docs_contract.sh",
-      "sha256": "6e63ee7b0210a6ad47b3bff1d04c3ca404d6b4b627d7977ba8207da198ae7c3c"
-    },
-    {
       "path": "scripts/tests/test_hook_classification.sh",
       "sha256": "99c99c821223e70a8a0b1cb89ce9a72f2bd1e5eebd011c2f42eadde056125491"
     },
     {
       "path": "scripts/tests/test_issues_413_418.py",
       "sha256": "bec574712bb6c776c2c3b0f571b87b152c33745214fe9dd7788b2a2dbff6fedd"
-    },
-    {
-      "path": "scripts/tests/test_launchd_identity_runtime.sh",
-      "sha256": "b17a1aad7203e700583f3a08c45a42244c8e552f8cf590975e95ab3925f4dada"
     },
     {
       "path": "scripts/tests/test_session_guard_hypothesis_gate.sh",
@@ -2397,7 +2393,7 @@
     },
     {
       "path": "scripts/tests/test_update_install_path_guard.sh",
-      "sha256": "cbbc95ee8ae7a24a3dadb6fe851320c25c94510f4a0d7d83aca6e67c4ab30ac6"
+      "sha256": "d3dd4ac16d5351d21d2e13e49c2d62cf73675aa88bee1f52ae2f750073afedcb"
     },
     {
       "path": "scripts/tests/test_update_settings_merge_drift.sh",
@@ -2417,7 +2413,7 @@
     },
     {
       "path": "scripts/validate-fmt-scripts.sh",
-      "sha256": "92f14a84bbca323c9cc7ca5cdec55ecfd48dd54be7db855e969662682bd3075a"
+      "sha256": "ce989f9a7a668ad2b65b10eed66c74e20852719bd3755ed02daedbd437f17639"
     },
     {
       "path": "scripts/validate-hypothesis-priority.sh",
@@ -2457,7 +2453,7 @@
     },
     {
       "path": "setup.sh",
-      "sha256": "6fb5583d98534b0aecc0f2c36f68da9784f1934975463ef6c29c79fd40d1fbec"
+      "sha256": "cb84a195b4578ff0dccdd4cd54fb4de7a9f9a7633b0a34ed6581a649c7de8b78"
     },
     {
       "path": "setup/build-runtime.sh",
@@ -2497,7 +2493,7 @@
     },
     {
       "path": "update.sh",
-      "sha256": "b6671f02b3ebb87b166711ecebc3f3af991681831ea64e20456071dfc088c495"
+      "sha256": "d849a97264180db81a60804d823433c065a247b877d2ed455bf37d6f95858fac"
     }
   ],
   "excluded_paths": [
@@ -2527,16 +2523,14 @@
     "scripts/tests/test_delivery_content.py",
     "scripts/tests/test_delivery_formal.py",
     "scripts/tests/test_dry_run_gate.py",
+    "scripts/tests/test_hindsight_docs_contract.sh",
     "scripts/tests/test_install_hooks.py",
+    "scripts/tests/test_launchd_identity_runtime.sh",
     "scripts/tests/test_manifest_coverage_local.py",
-    "scripts/tests/test_pending_phases_sweep.sh",
-    "scripts/tests/test_release_receipt.sh",
     "scripts/tests/test_residency_gate_skill_adapter.py",
     "scripts/tests/test_skill_promote.py",
     "scripts/tests/test_translate_delta.py",
     "scripts/tests/test_translate_parse.py",
-    "scripts/tests/test_update_install_path_guard_provenance.sh",
-    "scripts/tests/test_validate_hypothesis_priority.sh",
     "scripts/translate.py",
     "scripts/verify-template-integrity.sh",
     "sessions/2026-06/2026-06-17-01-kimi-setup/00-writer.md",
