@@ -31,6 +31,12 @@ telegram_load_creds() {
             creds_rc=1
         fi
     fi
+    # rbw-фолбэк (политика пилота 2026-08-18: секреты только в rbw, никакого
+    # plaintext в ~/.secrets/). Запись настраивается IWE_TG_RBW_ENTRY
+    # (default: telegram-chuck). chat_id — не секрет, приходит из окружения.
+    if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] && command -v rbw >/dev/null 2>&1; then
+        TELEGRAM_BOT_TOKEN=$(rbw get "${IWE_TG_RBW_ENTRY:-telegram-chuck}" 2>/dev/null | head -1 | grep -oE '[0-9]{8,}:[A-Za-z0-9_-]{30,}' || true)
+    fi
     if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
         echo "[telegram] ERROR: TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не заданы" >&2
         creds_rc=1

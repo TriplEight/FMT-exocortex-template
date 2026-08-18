@@ -2169,7 +2169,7 @@
     },
     {
       "path": "scripts/lib/telegram.sh",
-      "sha256": "4c5c0546b87a7bbe6dbff6af7ca011c561a1c2f5a2e5db4c4fedcd183bc9de3e"
+      "sha256": "873985ef6da00739b230a1b965578a751b927e2b25901973639e568b474357ab"
     },
     {
       "path": "scripts/llm-proxy-launcher.sh",
