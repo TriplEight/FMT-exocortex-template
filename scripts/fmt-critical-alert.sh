@@ -203,11 +203,15 @@ echo ""
 
 # Telegram alert (MVP)
 if $SEND_TG; then
-    # Fallback chain: TG_BOT_TOKEN → TELEGRAM_BOT_TOKEN (legacy/IWE-standard name from ~/.exocortex.env)
+    # Fallback chain: TG_BOT_TOKEN → TELEGRAM_BOT_TOKEN (env) → rbw.
+    # Секреты только в rbw (политика пилота 2026-08-18), plaintext-файлы не используются.
     TG_TOKEN="${TG_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-}}"
+    if [ -z "$TG_TOKEN" ] && command -v rbw >/dev/null 2>&1; then
+        TG_TOKEN=$(rbw get "${IWE_TG_RBW_ENTRY:-telegram-chuck}" 2>/dev/null | head -1 | grep -oE '[0-9]{8,}:[A-Za-z0-9_-]{30,}')
+    fi
     TG_CHAT="${TG_CHAT_ID:-${TELEGRAM_CHAT_ID:-}}"
     if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
-        echo "_TG alert skipped:_ TG_BOT_TOKEN/TELEGRAM_BOT_TOKEN or TG_CHAT_ID/TELEGRAM_CHAT_ID not set in environment."
+        echo "_TG alert skipped:_ TG token (env or rbw:${IWE_TG_RBW_ENTRY:-telegram-chuck}) or TG_CHAT_ID/TELEGRAM_CHAT_ID not set."
         exit 1
     fi
 

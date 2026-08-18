@@ -227,13 +227,26 @@ iwe_scheduler_active() {
 # run in contexts (CI, smoke-tests, fresh installs) that never configure them.
 # jq-built payload (not hand-escaped JSON) so a message containing a quote or
 # newline can't produce malformed JSON that silently drops the alert.
+# iwe_tg_token — токен бота из rbw (политика пилота 2026-08-18: секреты только
+# в rbw, никакого plaintext в ~/.secrets/ или ~/.config/aist/env). Уже
+# выставленный TELEGRAM_BOT_TOKEN выигрывает; запись rbw настраивается
+# переменной IWE_TG_RBW_ENTRY (по умолчанию telegram-chuck). Возвращает
+# токен в stdout; при неудаче — ненулевой код (вызывающий просто молчит).
+iwe_tg_token() {
+  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then printf '%s' "$TELEGRAM_BOT_TOKEN"; return 0; fi
+  command -v rbw >/dev/null 2>&1 || return 1
+  rbw get "${IWE_TG_RBW_ENTRY:-telegram-chuck}" 2>/dev/null \
+    | head -1 | grep -oE '[0-9]{8,}:[A-Za-z0-9_-]{30,}'
+}
+
 tg_notify() {
-  local msg="$1"
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+  local msg="$1" token
+  token=$(iwe_tg_token) || return 0
+  if [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
     local payload
     payload=$(jq -n --arg chat "$TELEGRAM_CHAT_ID" --arg text "$msg" \
       '{chat_id: $chat, text: $text, parse_mode: "Markdown"}')
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    curl -s -X POST "https://api.telegram.org/bot${token}/sendMessage" \
       -H "Content-Type: application/json" -d "$payload" > /dev/null
   fi
 }

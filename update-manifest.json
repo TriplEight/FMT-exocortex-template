@@ -1540,10 +1540,6 @@
       "sha256": "60fb686703ef17d480cfabb4c9f266b3c8256ddda780e87d0020711f607c6037"
     },
     {
-      "path": "roles/lib/scheduler-cron.sh",
-      "sha256": "60fb686703ef17d480cfabb4c9f266b3c8256ddda780e87d0020711f607c6037"
-    },
-    {
       "path": "roles/role-boundaries.md",
       "sha256": "7a9a03ac30020dda91657e95621954cc040349b8d71f50aff9d876177cee8495"
     },
@@ -1753,7 +1749,7 @@
     },
     {
       "path": "roles/synchronizer/scripts/notify.sh",
-      "sha256": "1c2c7c4fcb91d05015dc9254f7b1fa20e28dd54bede263140f46dd1e75643823"
+      "sha256": "e89529e498017f2accfee2c7f50afca1abb3982555f3b670a74fa7d0d232b1f7"
     },
     {
       "path": "roles/synchronizer/scripts/scheduler.sh",
@@ -2009,7 +2005,7 @@
     },
     {
       "path": "scripts/fmt-critical-alert.sh",
-      "sha256": "3ef35ba426ef153cb3e689f8aebdfcb4da3c8d336f586355e34d523111f73d44"
+      "sha256": "e159db7bafcfd9ebb680b2984011133d1a709fc4bdcbc50c60be78b9cd6c6f71"
     },
     {
       "path": "scripts/gate-metrics.sh",
@@ -2149,7 +2145,7 @@
     },
     {
       "path": "scripts/lib/common.sh",
-      "sha256": "a2c08644cb85a947671ac6e2f61bb293af4ed67bc6af2ecabdb85a992d0a6515"
+      "sha256": "1fd262201e4a5cdc1cc637a8f1ca1d5ef01b5e127cdd374e472ce8dc097acdf2"
     },
     {
       "path": "scripts/llm-proxy-launcher.sh",

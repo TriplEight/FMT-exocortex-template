@@ -38,16 +38,22 @@ AVAILABLE=$(ls "$TEMPLATES_DIR"/*.sh 2>/dev/null | xargs -I{} basename {} .sh | 
 AGENT="${1:?Ошибка: укажи агента (${AVAILABLE:-нет шаблонов})}"
 SCENARIO="${2:?Ошибка: укажи сценарий}"
 
-# Загрузка env
+# Загрузка env (не-секретные переменные; секреты — только rbw, политика пилота 2026-08-18)
 if [ -f "$ENV_FILE" ]; then
     set -a
     source "$ENV_FILE"
     set +a
 fi
 
+# Токен бота из rbw — если он ещё не в окружении. Plaintext-хранилищ токенов
+# больше нет; запись настраивается IWE_TG_RBW_ENTRY (default: telegram-chuck).
+if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] && command -v rbw >/dev/null 2>&1; then
+    TELEGRAM_BOT_TOKEN=$(rbw get "${IWE_TG_RBW_ENTRY:-telegram-chuck}" 2>/dev/null | head -1 | grep -oE '[0-9]{8,}:[A-Za-z0-9_-]{30,}' || true)
+fi
+
 # Проверка env vars
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-    echo "SKIP: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set (configure ~/.config/aist/env)"
+    echo "SKIP: TELEGRAM_BOT_TOKEN (rbw: rbw get ${IWE_TG_RBW_ENTRY:-telegram-chuck}) or TELEGRAM_CHAT_ID not set"
     exit 0
 fi
 
