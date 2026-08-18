@@ -249,7 +249,7 @@
     },
     {
       "path": ".claude/scripts/memory-drift-scan.py",
-      "sha256": "3a6b84fe9753a6c134afdf057dd005bfbcc6f6863e8d2022cc808b0fca82065c"
+      "sha256": "0ba8c9827de0d2d89889d6151c3912a75bcca3c6b965d9b74787ef98de4c0c2a"
     },
     {
       "path": ".claude/scripts/settings-merge-apply.sh",
@@ -529,7 +529,7 @@
     },
     {
       "path": ".claude/skills/strategy-session/SKILL.md",
-      "sha256": "af3172fc895b47f1bd6d9080c366c5d3588f243ede54b5695531d839e73e709f"
+      "sha256": "e2967c9df1fa2cf6e4bffa1ccb6f0fc8829a3409f36b0b7490dc6a10d80a5d0f"
     },
     {
       "path": ".claude/skills/think/SKILL.md",
@@ -613,7 +613,7 @@
     },
     {
       "path": ".githooks/pre-commit",
-      "sha256": "8eb6d862423aac9cf2a4f1ec8f5df511455ddc20f8497671eb28cbd4aeb65641"
+      "sha256": "c049b6529c5cada6bf407d813e0a4765774b9e06a18d6c905cc93823338b3303"
     },
     {
       "path": ".github/workflows/cloud-scheduler.yml",
@@ -1569,7 +1569,7 @@
     },
     {
       "path": "roles/strategist/prompts/session-prep.md",
-      "sha256": "5d3f0fef06c047050b08329e6be09103d27082ea368623c264578a288762e2b2"
+      "sha256": "9fb6fa9dbe414bb90082d0c3bed3055e9261f4a5380b2e97f1ac708c718ca676"
     },
     {
       "path": "roles/strategist/prompts/strategy-session-monthly.md",
@@ -1613,7 +1613,7 @@
     },
     {
       "path": "roles/strategist/prompts/strategy-session-weekly/steps/05a-measurement.md",
-      "sha256": "962b36cd5a72f21a4680ba122c3f02e643fad1da44ac830b5763ffa8b545aa83"
+      "sha256": "f844815388563f3c31e9edb8a02ed9bf1e010cfc131edbc63298bb4ea29e7248"
     },
     {
       "path": "roles/strategist/prompts/strategy-session-weekly/steps/05b-recommendation.md",
@@ -1621,7 +1621,7 @@
     },
     {
       "path": "roles/strategist/prompts/strategy-session-weekly/steps/05c-tracking.md",
-      "sha256": "28d9da25f3ab4be986fb42a70c02a84696f2072ebf012dac457463160ee7292e"
+      "sha256": "dc37287fb7bb0f53c9dbe5825fcc5f3431f90d4780c6bb938216dc45a4241f18"
     },
     {
       "path": "roles/strategist/prompts/strategy-session-weekly/steps/06a-pool.md",
@@ -1645,7 +1645,7 @@
     },
     {
       "path": "roles/strategist/prompts/strategy-session.md",
-      "sha256": "931062d5ba8e8ce5b7c8c91447ba85df8005f0fea61fd6469267690a4e270902"
+      "sha256": "c2f9b9108bd685bdc01792c33a099a57c6cc50700b4ddb2267c894efe7d0f555"
     },
     {
       "path": "roles/strategist/prompts/update-priorities.md",
@@ -1837,7 +1837,7 @@
     },
     {
       "path": "scripts/build-active-wp.py",
-      "sha256": "ab896aa1b981955bc42daa507abc44da084a0d0328a49dfc73c2c4d19341d974"
+      "sha256": "f53e30cdac9f5e5431ab0e6080fcd717514f17ee5cc907026cb9feff8aefc117"
     },
     {
       "path": "scripts/changelog-append.sh",
@@ -2397,7 +2397,7 @@
     },
     {
       "path": "scripts/validate-fmt-scripts.sh",
-      "sha256": "21e27eee793800d1f625e5033c5c02d5d316308004edcbc67c1c19e8926f20b0"
+      "sha256": "ce989f9a7a668ad2b65b10eed66c74e20852719bd3755ed02daedbd437f17639"
     },
     {
       "path": "scripts/validate-skill.sh",
@@ -2433,7 +2433,7 @@
     },
     {
       "path": "setup.sh",
-      "sha256": "0cd3bee4f5048a69eaddc4d3bca75b366754f14a3baf957bc9d3be28c2198927"
+      "sha256": "cb84a195b4578ff0dccdd4cd54fb4de7a9f9a7633b0a34ed6581a649c7de8b78"
     },
     {
       "path": "setup/build-runtime.sh",
