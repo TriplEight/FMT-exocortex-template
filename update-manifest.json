@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "version": "0.38.4",
+  "version": "0.38.5",
   "description": "Манифест платформенных файлов FMT-exocortex-template. Используется update.sh для доставки обновлений.",
   "files": [
     {
@@ -50,6 +50,10 @@
     {
       "path": ".claude/hooks/capture-bus.sh",
       "sha256": "54bae311bfe6a014b9a9382f6cee18a30c052dfb6a12c86de3b2c0f8b2611dd3"
+    },
+    {
+      "path": ".claude/hooks/check-pii-in-platform.sh",
+      "sha256": "9daa3ec92f88caf5c8be93612cb02beb84292bcb4c39e8d18409a5689fb0b665"
     },
     {
       "path": ".claude/hooks/check-trash.sh",
@@ -377,7 +381,7 @@
     },
     {
       "path": ".claude/skills/iwe-bug-report/SKILL.md",
-      "sha256": "ba2fedf9659ab04e9f06dc19d015ed76e394e046abf29bb2cbf920792a924860"
+      "sha256": "627aa06118e339999e7eb901ccf852730544160cf667b873b1ec50260215f7cf"
     },
     {
       "path": ".claude/skills/iwe-restore/SKILL.md",
@@ -617,7 +621,7 @@
     },
     {
       "path": ".github/workflows/cloud-scheduler.yml",
-      "sha256": "9b61f9aa74d0abb0037fcf7ae8b867bb7d5b59b3c0a391ae2d89398edc3c3f33"
+      "sha256": "7bfbe1a561531dea5f2d5539a99971dcbb1167877911a67072ee8330c7e86936"
     },
     {
       "path": ".github/workflows/notify-security.yml",
@@ -633,7 +637,7 @@
     },
     {
       "path": ".gitignore",
-      "sha256": "5faf5868c204662a671ab1f4696ed8f06323b646fba12f18cf37a7c28a04c08f"
+      "sha256": "482fc43c3a96dcd12cfafc9e5aaf2937629a152a3c29095e06adace8f2dfc6a8"
     },
     {
       "path": ".mcp.json",
@@ -653,7 +657,7 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "f6d88e3bc47a30d9f561b68934078bf7e286de880cc5926e02864a161b137b4d"
+      "sha256": "c0a2e824f0c22ccf7afddc4f1147ec715d47397b366df577cfcf1fcc48923f95"
     },
     {
       "path": "CLAUDE.md",
@@ -685,7 +689,7 @@
     },
     {
       "path": "docs/CLOUD-SCHEDULER.md",
-      "sha256": "5d4510a031d43cc85cd16735ec3a3a7490a8c14822622fb73902abd068b588cd"
+      "sha256": "cecf3f96218990b6c48c460b0207c1008472d08be8404929c22bede1c4240bd7"
     },
     {
       "path": "docs/DATA-DOMAINS-REGISTRY.yaml",
@@ -774,6 +778,10 @@
     {
       "path": "docs/assets/orz-cycle.svg",
       "sha256": "f12a5ba4cbacffa2d7aa5bfe7148c43273195e8276173de5007c0658efe01b1a"
+    },
+    {
+      "path": "docs/critical-files-map.yaml",
+      "sha256": "417999bef5bbb2d311ad740c7e2c8a1a187cf1992e68e114b58b5be75e2dcce3"
     },
     {
       "path": "docs/hindsight-setup.md",
@@ -1325,7 +1333,7 @@
     },
     {
       "path": "memory/lpf-hypothesis-log.md",
-      "sha256": "37acffc3e21f22dc6b60661680187f19a3fc95c30c3881c3ed7fd3829b9f5c3c"
+      "sha256": "058bb2a0adbeee41a5512a572c82f78b24325814e1b3244fd69e10bcd823e8ff"
     },
     {
       "path": "memory/memory-lifecycle-spec.md",
@@ -1477,7 +1485,7 @@
     },
     {
       "path": "roles/extractor/install.sh",
-      "sha256": "d5983fddf2b17f98f6cc4dda1cc28442834e0148dcd7dcb504b007f2ff44c506"
+      "sha256": "5f3d16cd570eed659ae86e40e99417137d2be0e4128dc2cf88dc55de3681bb66"
     },
     {
       "path": "roles/extractor/prompts/git-diff-feed.md",
@@ -1528,6 +1536,10 @@
       "sha256": "9fc2ec3a24618221bdd5793931098d4ce25683449d83287e8a4ae9f85371cd5e"
     },
     {
+      "path": "roles/lib/scheduler-cron.sh",
+      "sha256": "60fb686703ef17d480cfabb4c9f266b3c8256ddda780e87d0020711f607c6037"
+    },
+    {
       "path": "roles/role-boundaries.md",
       "sha256": "7a9a03ac30020dda91657e95621954cc040349b8d71f50aff9d876177cee8495"
     },
@@ -1537,7 +1549,7 @@
     },
     {
       "path": "roles/strategist/install.sh",
-      "sha256": "3bddab1898110d15cd9c18db2b223d8e7d3238c9cc50be33cef985185bea7baf"
+      "sha256": "c8ecd86b705c6a85dc7ce848ff2b927939de77fc90b04f920c43eea436b4387f"
     },
     {
       "path": "roles/strategist/prompts/add-wp.md",
@@ -1705,7 +1717,7 @@
     },
     {
       "path": "roles/synchronizer/install.sh",
-      "sha256": "f23fd54ad95de03bf002f2145e9166f469dd0a8bea9a26f7c98683dce9d18a8a"
+      "sha256": "d849c55d4acd1d6e0e6913d95c209801bbfe54f84a289c9a5986e9b2b421fd42"
     },
     {
       "path": "roles/synchronizer/role.yaml",
@@ -1854,6 +1866,14 @@
     {
       "path": "scripts/check-claude-md-links.py",
       "sha256": "f3f6fb6080291f4a36d48fed4167a872df8996154f04f8ab22802c388295be04"
+    },
+    {
+      "path": "scripts/check-critical-files-map.sh",
+      "sha256": "9af2c1bd756e2bbd6d0ebdceb549f15a5c94dd546dbc705e2e27de105ba23bce"
+    },
+    {
+      "path": "scripts/check-delivery-route-label.sh",
+      "sha256": "514f957947b593bd30c542bbced6d133c3722415b064842bbb7ef73eec322ce0"
     },
     {
       "path": "scripts/check-dirty-repos.sh",
@@ -2045,7 +2065,7 @@
     },
     {
       "path": "scripts/iwe-audit.sh",
-      "sha256": "e51beb3db2c34c0660171c0ec87ab4d0004fa59f17255a89bb9f84eebeb86f45"
+      "sha256": "0863c2f389fd4a734528470aa1296f87b5097cc40d0165de020e3f543f24fa1f"
     },
     {
       "path": "scripts/iwe-backup-check.sh",
@@ -2181,7 +2201,7 @@
     },
     {
       "path": "scripts/pending-phases-sweep.sh",
-      "sha256": "9e2434ef4b64154fc15cb3874588b086670c89d74993ecdb778fbd8a4e5e42b2"
+      "sha256": "503709e24f6e191c571bd7adb407866dabe0ee596ea14c79368d8bcf4a43c3b2"
     },
     {
       "path": "scripts/post-update-check-skills.sh",
@@ -2194,6 +2214,10 @@
     {
       "path": "scripts/promote-common.sh",
       "sha256": "09f091dc35474ca700060f0bd5a717f3617118d41ead190b3607a4aa0db015ad"
+    },
+    {
+      "path": "scripts/release-receipt.sh",
+      "sha256": "e70fac071cbe4731e21be3363c2fd29a9a4a66e13ef851f94d5c33bb6815dd06"
     },
     {
       "path": "scripts/restore-from-exocortex.sh",
@@ -2400,6 +2424,10 @@
       "sha256": "ce989f9a7a668ad2b65b10eed66c74e20852719bd3755ed02daedbd437f17639"
     },
     {
+      "path": "scripts/validate-hypothesis-priority.sh",
+      "sha256": "4d8209a0abcf6294bd93a13dcc9c74df91b90d865d1c7b9a52a3140fe2289c20"
+    },
+    {
       "path": "scripts/validate-skill.sh",
       "sha256": "35c13fa3df643cade27d01f6a15e62ae0002c6adb6e9885545d47e5d8becd815"
     },
@@ -2473,7 +2501,7 @@
     },
     {
       "path": "update.sh",
-      "sha256": "8a1ad0eace84c53a1f06f967952e9e501e3eacb449fb1a9cda92e89635aae62d"
+      "sha256": "d849a97264180db81a60804d823433c065a247b877d2ed455bf37d6f95858fac"
     }
   ],
   "excluded_paths": [

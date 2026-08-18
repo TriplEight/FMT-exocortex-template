@@ -21,7 +21,7 @@ EXIT_GENERAL=1
 
 trap 'echo "ОШИБКА: update.sh прервался на строке ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-VERSION="2.4.1"  # fix (WP-401): deprecated-file removal now checks is_protected_user_file() — a protected file (e.g. sessions/00-index.md) listed in deprecated_files by mistake could previously be deleted despite the "Не затрагиваются" report claiming otherwise; fix #229: repair-pass no longer stale-repairs memory files with owner: user in frontmatter; fix #228: hot-budget validator warns when memory/*.md horizon:hot lines exceed threshold
+VERSION="2.5.0"  # feat: git worktree delivery — one `git fetch` replaces ~600 per-file raw requests (Fastly edge rate-limits bursts: 502@#10, 429@#171 on 2026-08-18); curl stays as fallback for non-git installs. Prior: fix (WP-401): deprecated-file removal now checks is_protected_user_file(); fix #229: repair-pass no longer stale-repairs memory files with owner: user; fix #228: hot-budget validator warns on horizon:hot overflow
 REPO="TserenTserenov/FMT-exocortex-template" # UPSTREAM-CONST: do not substitute
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/$REPO/$BRANCH"
@@ -200,6 +200,44 @@ is_protected_user_file() {
 is_upstream_git_mirror() {
     git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
     git -C "$SCRIPT_DIR" remote get-url upstream >/dev/null 2>&1
+}
+
+# === Git worktree delivery (rate-limit-safe source) ===
+# raw.githubusercontent.com (Fastly edge) throttles the per-file burst: on
+# 2026-08-18 a full run died with HTTP 502 at request #10 and HTTP 429 at #171
+# (evidence in the linked PR), and retries only escalated the throttle because
+# every run re-downloads all ~600 files. One `git fetch` moves the whole
+# delivery over a single connection; the download loop then reads files from a
+# detached worktree. Curl remains the fallback for non-git installs.
+GIT_SOURCE_DIR=""
+
+init_git_source() {
+    # Sets GIT_SOURCE_DIR on success; returns 1 to let the caller try the next
+    # remote or fall back to curl. Remote `upstream` is preferred (canonical),
+    # `origin` covers a plain clone of the canonical repo.
+    local remote="$1" wt
+    command -v git >/dev/null 2>&1 || return 1
+    git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    git -C "$SCRIPT_DIR" remote get-url "$remote" >/dev/null 2>&1 || return 1
+    # Fetch the pinned delivery SHA when resolved (issue #398 consistency for
+    # the git path too — a branch tip that moved past the pinned commit may
+    # legitimately differ from the manifest, e.g. a post-release push).
+    # GitHub allows fetching an exact reachable SHA; fall back to the branch.
+    if ! git -C "$SCRIPT_DIR" fetch --quiet "$remote" "${DELIVERY_REF:-$BRANCH}" 2>/dev/null; then
+        git -C "$SCRIPT_DIR" fetch --quiet "$remote" "$BRANCH" || return 1
+    fi
+    wt=$(mktemp -d "${TMPDIR:-/tmp}/iwe-update-src.XXXXXX") || return 1
+    if ! git -C "$SCRIPT_DIR" worktree add --detach --quiet "$wt" FETCH_HEAD 2>/dev/null; then
+        rmdir "$wt" 2>/dev/null
+        return 1
+    fi
+    GIT_SOURCE_DIR="$wt"
+}
+
+remove_git_source() {
+    [ -n "$GIT_SOURCE_DIR" ] || return 0
+    git -C "$SCRIPT_DIR" worktree remove --force "$GIT_SOURCE_DIR" >/dev/null 2>&1
+    GIT_SOURCE_DIR=""
 }
 
 # Личные L4-конфиги в memory/: update.sh сеет их при ОТСУТСТВИИ (новая инсталляция),
@@ -647,6 +685,7 @@ assert_self_unmutated() {
 # hashes from one revision with content from another (issue #398).
 resolve_delivery_ref() {
     local resolved_ref
+    DELIVERY_REF=""
     if ! py_available; then
         echo "  ⚠ Нет python3: поставка проверяется по подвижной ветке $BRANCH."
         return 0
@@ -660,6 +699,7 @@ if not re.fullmatch(r"[0-9a-f]{40}", sha):
     raise SystemExit(1)
 print(sha)'); then
         RAW_BASE="https://raw.githubusercontent.com/$REPO/$resolved_ref"
+        DELIVERY_REF="$resolved_ref"
         echo "  Снимок поставки: ${resolved_ref:0:12}"
     else
         echo "  ⚠ Не удалось закрепить $BRANCH по commit SHA; используется подвижная ветка."
@@ -670,6 +710,7 @@ print(sha)'); then
 TMPDIR_UPDATE=$(mktemp -d 2>/dev/null || { mkdir -p "/tmp/exocortex-update-$$"; echo "/tmp/exocortex-update-$$"; })
 cleanup_update() {
     local status=$?
+    remove_git_source
     rm -rf "$TMPDIR_UPDATE"
     if [ "$UPDATE_TRANSACTION_STARTED" = true ] && [ "$status" -ne 0 ] && [ -f "$UPDATE_INCOMPLETE_MARKER" ]; then
         echo "⚠ Обновление завершилось не полностью; маркер сохранён: $UPDATE_INCOMPLETE_MARKER" >&2
@@ -718,10 +759,25 @@ echo ""
 # === Step 1: Fetch manifest ===
 echo "[1] Загрузка манифеста..."
 resolve_delivery_ref
+
+# Prefer a git worktree mirror of the delivery: one fetch instead of ~600 raw
+# requests (rate-limit evidence 2026-08-18, see init_git_source). Manifest and
+# files come from the same FETCH_HEAD commit, so the manifest↔file consistency
+# guarantee of issue #398 holds even if the branch moved between the ref
+# resolution above and this fetch.
+for _git_remote in upstream origin; do
+    if init_git_source "$_git_remote"; then
+        echo "  Источник файлов: git worktree (remote: $_git_remote)"
+        break
+    fi
+done
+
 MANIFEST_URL="$RAW_BASE/update-manifest.json"
 MANIFEST="$TMPDIR_UPDATE/manifest.json"
 
-if ! curl $CURL_BASE_OPTS $_CURL_SSL_OPT -sSfL "$MANIFEST_URL" -o "$MANIFEST" 2>/dev/null; then
+if [ -n "$GIT_SOURCE_DIR" ] && [ -f "$GIT_SOURCE_DIR/update-manifest.json" ]; then
+    cp "$GIT_SOURCE_DIR/update-manifest.json" "$MANIFEST"
+elif ! curl $CURL_BASE_OPTS $_CURL_SSL_OPT -sSfL "$MANIFEST_URL" -o "$MANIFEST" 2>/dev/null; then
     echo "ОШИБКА: Не удалось загрузить манифест обновлений."
     echo "  URL: $MANIFEST_URL"
     echo "  Проверьте подключение к интернету."
@@ -1017,7 +1073,10 @@ while IFS='|' read -r fpath fdesc expected_hash; do
     # no list at all, not even the UNCHANGED counter, so the preview said nothing about
     # it while a later run (network back) applied it. "Could not check" is not "up to
     # date"; it now gets its own list and taints the verdict below.
-    if ! curl $CURL_BASE_OPTS $_CURL_SSL_OPT -sSfL "$RAW_BASE/$fpath" -o "$REMOTE_FILE" 2>/dev/null; then
+    if [ -n "$GIT_SOURCE_DIR" ] && [ -f "$GIT_SOURCE_DIR/$fpath" ]; then
+        # git worktree delivery: same commit as the manifest, no per-file request
+        cp "$GIT_SOURCE_DIR/$fpath" "$REMOTE_FILE"
+    elif ! curl $CURL_BASE_OPTS $_CURL_SSL_OPT -sSfL "$RAW_BASE/$fpath" -o "$REMOTE_FILE" 2>/dev/null; then
         SKIPPED_DOWNLOAD+=("$fpath")
         continue
     fi
@@ -1130,6 +1189,20 @@ if [ ${#SKIPPED_DOWNLOAD[@]} -gt 0 ]; then
     done
     echo "  Эти файлы могут отличаться от upstream и быть перезаписаны при обычном запуске."
     echo ""
+fi
+
+# WP-529 Ф2: TOTAL_CHANGES=0 branch below already refuses to apply anything and
+# leaves the local manifest version untouched when a download/integrity check
+# failed. But when OTHER files genuinely changed (TOTAL_CHANGES>0), nothing
+# used to stop Step 5 from applying those and then Step 6e replacing the local
+# manifest wholesale — stamping the run as "updated to vX" while the files in
+# SKIPPED_DOWNLOAD silently stayed on the old version. Abort here, before Step 4
+# confirmation/Step 5 apply, so a partial fetch never produces a partial write.
+if [ "$TOTAL_CHANGES" -gt 0 ] && [ ${#SKIPPED_DOWNLOAD[@]} -gt 0 ] && ! $CHECK_ONLY; then
+    echo "✗ Обновление остановлено: ${#SKIPPED_DOWNLOAD[@]} файл(ов) не скачались или не прошли проверку целостности (список выше)."
+    echo "  Применение остальных ${TOTAL_CHANGES} изменений отменено — иначе локальный манифест пометил бы обновление как завершённое, а эти файлы остались бы старыми."
+    echo "  Ничего не изменено. Повторите запуск, когда сеть будет доступна."
+    exit "$EXIT_NETWORK"
 fi
 
 if [ "$TOTAL_CHANGES" -eq 0 ] && [ ${#SKIPPED_DOWNLOAD[@]} -gt 0 ]; then
@@ -2100,13 +2173,18 @@ echo ""
 echo "Проверка применённых изменений..."
 
 validate_no_install_values_in_applied_additions() {
-    local env_file="$WORKSPACE_DIR/.exocortex.env" key value failed=0 fpath applied_additions i
+    local env_file="$WORKSPACE_DIR/.exocortex.env"
+    local key value fpath applied_additions added_line historical_lines upstream_ref
+    local i failed=0
     local -a install_keys=() install_values=()
+
     [ -f "$env_file" ] || return 0
     [ "${#APPLIED_PATHS[@]}" -gt 0 ] || return 0
 
     for key in WORKSPACE_DIR HOME_DIR CLAUDE_PATH IWE_TEMPLATE IWE_RUNTIME; do
-        value=$(grep -E "^${key}=" "$env_file" 2>/dev/null | head -1 | cut -d= -f2- | sed -E 's/^"//; s/"$//; s/^'"'"'//; s/'"'"'$//')
+        value=$(grep -E "^${key}=" "$env_file" 2>/dev/null |
+            head -1 | cut -d= -f2- |
+            sed -E 's/^"//; s/"$//; s/^'"'"'//; s/'"'"'$//')
         [ -n "$value" ] || continue
         # issue #397: guard ищет значение как ПОДСТРОКУ во всех добавленных строках.
         # Для путей (WORKSPACE_DIR и т.п.) это осмысленно — случайное совпадение с
@@ -2123,32 +2201,64 @@ validate_no_install_values_in_applied_additions() {
         install_values+=("$value")
     done
 
-    # Guard only files handled by this update. Tracked paths use working-tree
-    # additions; a newly delivered untracked file is scanned in full. No staging is
-    # needed: update.sh must not mutate the user's index or create local commits (#386).
+    # issue #459: guard считал совпадение по подстроке уже утечкой, хотя
+    # substitute_claude_placeholders() никогда не пишет в $SCRIPT_DIR (только
+    # во временную workspace-копию CLAUDE.md) — совпадение здесь могло быть
+    # текстом, который апстрим и раньше приносил под другим значением, не
+    # реальной подстановкой личного пути. Полностью убирать guard нельзя (он
+    # защищает от любой утечки install-path, не только через подстановку —
+    # например, случайно скопированный фрагмент личного конфига в коммит
+    # шаблона); вместо этого сужаем срабатывание: install-значение блокирует
+    # только если добавленная строка ЦЕЛИКОМ (не подстрока) не встречалась
+    # раньше ни в одной прошлой upstream-версии этого же файла.
+    upstream_ref=$(git -C "$SCRIPT_DIR" rev-parse --verify --quiet '@{upstream}' 2>/dev/null || true)
+
     for fpath in "${APPLIED_PATHS[@]}"; do
-        if git -C "$SCRIPT_DIR" ls-files --error-unmatch -- "$fpath" >/dev/null 2>&1; then
-            applied_additions=$(git -C "$SCRIPT_DIR" diff --no-color --no-ext-diff --no-textconv --unified=0 -- "$fpath" |
-                awk '
-                    /^diff --git / { in_hunk=0; next }
-                    /^@@ / { in_hunk=1; next }
-                    in_hunk && /^\+/ { print substr($0, 2) }
-                ')
-        elif [ -f "$SCRIPT_DIR/$fpath" ]; then
+        # Полное текущее содержимое файла на диске, не git-diff working
+        # tree против HEAD. Cold-context review нашёл живую дыру: если файл
+        # уже ЗАКОММИЧЕН до этого прогона (второй прогон update.sh после
+        # ручного коммита, пре-commit хук и т.п.) — git diff между working
+        # tree и HEAD пуст для этого файла (разницы нет), applied_additions
+        # становится пустой строкой, "[ -n ... ] || continue" молча
+        # пропускает файл ЦЕЛИКОМ из проверки — реальная утечка проходит
+        # незамеченной. Файл в APPLIED_PATHS означает "этот прогон его
+        # затронул", независимо от git-статуса — сканировать нужно то, что
+        # реально лежит на диске сейчас.
+        if [ -f "$SCRIPT_DIR/$fpath" ]; then
             applied_additions=$(sed -n 'p' "$SCRIPT_DIR/$fpath")
         else
             continue
         fi
         [ -n "$applied_additions" ] || continue
 
-        for i in "${!install_keys[@]}"; do
-            if grep -Fq -- "${install_values[$i]}" <<<"$applied_additions"; then
-                echo "  ✗ install-value ${install_keys[$i]} найден в добавленных строках обновления:" >&2
-                printf '    %s\n' "$fpath" >&2
-                failed=1
-            fi
-        done
+        # Полные строки из всех прошлых версий именно этого файла в upstream.
+        # Нет upstream ref / нет истории — исключения нет, guard fail-closed.
+        historical_lines=""
+        if [ -n "$upstream_ref" ]; then
+            historical_lines=$(git -C "$SCRIPT_DIR" log --follow --format= \
+                --no-ext-diff --no-textconv -p "$upstream_ref" -- "$fpath" |
+                awk '
+                    /^diff --git / { in_hunk=0; next }
+                    /^@@ / { in_hunk=1; next }
+                    in_hunk && /^[+-]/ { print substr($0, 2) }
+                ')
+        fi
+
+        while IFS= read -r added_line || [ -n "$added_line" ]; do
+            for i in "${!install_keys[@]}"; do
+                [[ "$added_line" == *"${install_values[$i]}"* ]] || continue
+
+                # Исключение только для идентичной полной строки, уже
+                # поставлявшейся upstream; совпадение одной подстроки не достаточно.
+                if ! grep -Fqx -- "$added_line" <<<"$historical_lines"; then
+                    echo "  ✗ install-value ${install_keys[$i]} найден в новой строке обновления:" >&2
+                    printf '    %s\n' "$fpath" >&2
+                    failed=1
+                fi
+            done
+        done <<<"$applied_additions"
     done
+
     [ "$failed" -eq 0 ]
 }
 
