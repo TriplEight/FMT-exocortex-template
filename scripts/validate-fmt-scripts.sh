@@ -76,6 +76,9 @@ if [[ "$MODE" != "settings-json" ]]; then
         fi
 
         # Проверка 2: голое имя авторского governance-репо (без env-var fallback)
+        # Тестовые фикстуры (scripts/tests/*, test_*.py|.sh) исключены: буквальный
+        # "DS-strategy" там — ожидаемое значение по умолчанию, которое тест проверяет
+        # (env override рендерится в default), а не хардкод-протечка (2026-08-17).
         # Допустимо:
         #   - ${IWE_GOVERNANCE_REPO:-DS-strategy}  (bash default)
         #   - ${IWE_GOVERNANCE_REPO:?...}          (bash required)
@@ -93,7 +96,12 @@ if [[ "$MODE" != "settings-json" ]]; then
         # `cd ".../DS-strategy" || echo "DS-strategy"` (реальный хардкод в cd, замаскированный
         # безопасным fallback-хвостом) прошёл бы незамеченным, т.к. хвост строки матчит
         # safe-паттерн, даже когда начало строки содержит отдельный, опасный хардкод.
-        if grep -q "$AUTHOR_GOV_REPO" "$f" 2>/dev/null; then
+        if [[ "$f" == */tests/* || "$fname" == test_* || "$fname" == test-* ]]; then
+            is_test_fixture=1
+        else
+            is_test_fixture=0
+        fi
+        if [[ "$is_test_fixture" -eq 0 ]] && grep -q "$AUTHOR_GOV_REPO" "$f" 2>/dev/null; then
             bad_lines=$(grep -n "$AUTHOR_GOV_REPO" "$f" \
                 | grep -v '^\s*#\|^[0-9]*:\s*#' \
                 | grep -v '\${[^}]*:-' \
