@@ -367,12 +367,15 @@ case "$1" in
 
         # Alert if LLM failed AND cleanup was needed (only for NEW bold, not deferred 🔄)
         if [ "$BOLD_NEW_AFTER" -ge "$BOLD_NEW_BEFORE" ] && [ "$BOLD_NEW_BEFORE" -gt 0 ]; then
-            ENV_FILE="$HOME/.config/aist/env"
-            if [ -f "$ENV_FILE" ]; then
-                set -a; source "$ENV_FILE"; set +a
+            # Секреты только в rbw (политика пилота 2026-08-18), env-файлы не используются.
+            TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+            if [ -z "$TG_TOKEN" ] && command -v rbw >/dev/null 2>&1; then
+                TG_TOKEN=$(rbw get "${IWE_TG_RBW_ENTRY:-telegram-chuck}" 2>/dev/null | head -1 | grep -oE '[0-9]{8,}:[A-Za-z0-9_-]{30,}' || true)
+            fi
+            if [ -n "$TG_TOKEN" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
                 ALERT_TEXT="⚠️ <b>Note-Review canary</b>: Step 10 не сработал ($BOLD_NEW_BEFORE → $BOLD_NEW_AFTER new bold). Deterministic cleanup applied."
                 ALERT_JSON=$(printf '%s' "$ALERT_TEXT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
-                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
                     -H "Content-Type: application/json" \
                     -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${ALERT_JSON},\"parse_mode\":\"HTML\"}" >> "$LOG_FILE" 2>&1 || true
             fi

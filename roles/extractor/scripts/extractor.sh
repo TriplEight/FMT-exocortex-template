@@ -371,6 +371,15 @@ cleanup_isolated_inbox_worktree() {
 pending_capture_count() {
     local captures_file="$1"
 
+    # bug-2026-08-17: captures.md отсутствует в origin/main (легитимное состояние —
+    # Note-Review пишет туда только по явному маркеру «Экстрактору»). awk по
+    # несуществующему файлу завершается кодом 2, при set -e это убивало
+    # inbox-check целиком (status=2/INVALIDARGUMENT каждые 3 часа).
+    if [ ! -f "$captures_file" ]; then
+        echo 0
+        return 0
+    fi
+
     awk '
       /^### / && !/\[(analyzed|processed|duplicate|defer)/ {
         found = 0

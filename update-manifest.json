@@ -1517,7 +1517,7 @@
     },
     {
       "path": "roles/extractor/scripts/extractor.sh",
-      "sha256": "a63006b35ff917c73853c7db1bce5ce91dcc1c791d43e55b16f790e02a77aa38"
+      "sha256": "ab2bf405f37016002ec2a3a4a45dcee2f0942fd36b1ee16bae1302dc40351866"
     },
     {
       "path": "roles/extractor/scripts/launchd/com.extractor.inbox-check.plist",
@@ -1689,7 +1689,7 @@
     },
     {
       "path": "roles/strategist/scripts/strategist.sh",
-      "sha256": "f8dda04ae17b71b7315cf0cef2932df978b9e1c6f6ae391b9409605b564bfd80"
+      "sha256": "73fbe3e658ce529d92dd43d4678d8d366fa1e61c2d27ebd2d0c0ab263d4e59de"
     },
     {
       "path": "roles/strategist/scripts/systemd/iwe-strategist-morning.service",
