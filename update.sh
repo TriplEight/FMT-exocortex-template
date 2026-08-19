@@ -21,7 +21,7 @@ EXIT_GENERAL=1
 
 trap 'echo "ОШИБКА: update.sh прервался на строке ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
-VERSION="2.5.0"  # feat: git worktree delivery — one `git fetch` replaces ~600 per-file raw requests (Fastly edge rate-limits bursts: 502@#10, 429@#171 on 2026-08-18); curl stays as fallback for non-git installs. Prior: fix (WP-401): deprecated-file removal now checks is_protected_user_file(); fix #229: repair-pass no longer stale-repairs memory files with owner: user; fix #228: hot-budget validator warns on horizon:hot overflow
+VERSION="2.5.1"  # fix (bug-2026-08-19): self-update semver guard — не даунгрейдить локальный update.sh более старым upstream (v2.5.0 была молча перезаписана v2.4.1); prior: feat: git worktree delivery — one `git fetch` replaces ~600 per-file raw requests (Fastly edge rate-limits bursts: 502@#10, 429@#171 on 2026-08-18); curl stays as fallback for non-git installs
 REPO="TserenTserenov/FMT-exocortex-template" # UPSTREAM-CONST: do not substitute
 BRANCH="main"
 RAW_BASE="https://raw.githubusercontent.com/$REPO/$BRANCH"
@@ -741,7 +741,16 @@ if curl $CURL_BASE_OPTS $_CURL_SSL_OPT -sSfL "$RAW_BASE/update.sh" -o "$REMOTE_U
     LOCAL_HASH=$(hash_file "$SCRIPT_DIR/update.sh")
     REMOTE_HASH=$(hash_file "$REMOTE_UPDATE")
     if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
-        if $CHECK_ONLY; then
+        # bug-2026-08-19 (self-downgrade): локальный update.sh может быть новее
+        # upstream (авторский конвейер доставляет фиксы раньше мержа). Сравнение
+        # только по sha256 не видит направления — v2.5.0 была молча перезаписана
+        # upstream v2.4.1. Гвард: даунгрейд по semver запрещён.
+        LOCAL_VER=$(sed -n 's/^VERSION="\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' "$SCRIPT_DIR/update.sh" | head -1)
+        REMOTE_VER=$(sed -n 's/^VERSION="\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' "$REMOTE_UPDATE" | head -1)
+        if [ -n "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ] && [ "$REMOTE_VER" != "$LOCAL_VER" ] \
+            && [ "$REMOTE_VER" = "$(printf '%s\n%s\n' "$LOCAL_VER" "$REMOTE_VER" | sort -V | head -1)" ]; then
+            echo "  Локальная v$LOCAL_VER новее upstream v$REMOTE_VER — даунгрейд пропущен."
+        elif $CHECK_ONLY; then
             # In --check mode: report available update without touching the file
             echo "  ⚠ Новая версия update.sh доступна. Запустите без --check для обновления."
         else
