@@ -544,7 +544,9 @@ weekplan_path, wp_num, title, priority, budget = sys.argv[1:6]
 # Маппинг приоритета → светофор
 flag_map = {"P1": "🔴", "P2": "🟡", "P3": "🟢", "P4": "⚪", "P5": "⚪"}
 flag = flag_map.get(priority, "⚪")
-h_val = re.sub(r"[^0-9\-]", "", budget) or "?"
+# bug: stripping "." along with letters turned "0.5h" into "05" in the WeekPlan
+# "h" column. Keep digits, "-" (ranges like "2-3h") and "." (sub-hour budgets).
+h_val = re.sub(r"[^0-9\-.]", "", budget) or "?"
 
 with open(weekplan_path, "r", encoding="utf-8") as f:
     lines = f.readlines()
@@ -599,8 +601,13 @@ fi
 # --- Шаг 4: Strategy.md (только если --result задан и бюджет ≥3h) ---
 echo "4/5 Strategy.md..."
 
-BUDGET_H=$(echo "$BUDGET" | sed 's/[^0-9]//g')
-if [[ -n "$RESULT" && "${BUDGET_H:-0}" -ge 3 ]]; then
+# bug: stripping "." (e.g. sed 's/[^0-9]//g') turned "0.5h" into "05", which bash's
+# `-ge` then parsed as octal 5 — a sub-hour budget wrongly counted as >=3h. Extract
+# the leading decimal number and compare with awk so fractional hours stay < 3.
+BUDGET_NUM=$(echo "$BUDGET" | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
+BUDGET_NUM="${BUDGET_NUM:-0}"
+budget_at_least_3h() { awk -v n="$BUDGET_NUM" 'BEGIN { exit !(n >= 3) }'; }
+if [[ -n "$RESULT" ]] && budget_at_least_3h; then
   STRATEGY_FILE="$STRATEGY/docs/Strategy.md"
   python3 - "$STRATEGY_FILE" "$WP_ID" "$REPO" "$RESULT" <<'PYEOF'
 import sys
@@ -631,7 +638,7 @@ with open(strategy_path, "w", encoding="utf-8") as f:
     f.write(content)
 print("   ✅ Strategy.md: WP-{} → {} добавлен".format(wp_id, result))
 PYEOF
-elif [[ "${BUDGET_H:-0}" -ge 3 ]]; then
+elif budget_at_least_3h; then
   echo "   ℹ️  РП ≥3h, но --result не задан — добавить маппинг в Strategy.md вручную"
 else
   echo "   ℹ️  РП <3h — маппинг в Strategy.md не требуется"
