@@ -559,14 +559,21 @@ def parse_weekplan_budget_for_date(date_str, gov_dir):
                 content = f.read()
             if not section_re.search(content):
                 continue
-            # Разбить по <details> и найти блок с нужным «Итоги»
-            blocks = content.split('<details')
+            # Разбить по ## Итоги ... и найти блок с нужным «Итоги»
+            lines = content.split('\\n')
             section = None
-            for blk in blocks:
-                if section_re.search(blk):
-                    end = blk.find('</details>')
-                    section = blk[:end] if end >= 0 else blk
+            start_idx = None
+            for i, ln in enumerate(lines):
+                if ln.startswith('## ') and section_re.search(ln):
+                    start_idx = i
                     break
+            if start_idx is not None:
+                end_idx = len(lines)
+                for i in range(start_idx + 1, len(lines)):
+                    if lines[i].startswith('## '):
+                        end_idx = i
+                        break
+                section = '\\n'.join(lines[start_idx:end_idx])
             if section is None:
                 continue
             for line in section.split('\\n'):

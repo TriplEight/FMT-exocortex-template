@@ -71,7 +71,7 @@ def test_verify_passes_with_closed_day_english_headings(tmp_path):
         f"# DayPlan\n## Day summary ({today.isoformat()})\ndone\n", encoding="utf-8"
     )
     (gov / "current" / "WeekReport W29.md").write_text(
-        f"<details><summary><b>Results — {today.day} July</b></summary>ok</details>\n",
+        f"## Results — {today.day} July\nok\n",
         encoding="utf-8",
     )
     result = _run(ws, tmp_path, "--verify")

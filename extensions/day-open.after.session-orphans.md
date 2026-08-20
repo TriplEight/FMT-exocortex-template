@@ -12,7 +12,7 @@ if [ -n "$SECTION" ]; then
   echo "$SECTION"
   FILE="$(ls {{IWE_GOVERNANCE_REPO}}/current/DayPlan\ *.md 2>/dev/null | head -1)"
   if [ -f "$FILE" ] && ! grep -q "Незакрытые сессии" "$FILE"; then
-    if grep -q "<summary><b>Контекст недели" "$FILE"; then
+    if grep -q "^## Контекст недели" "$FILE"; then
       python3 -c "
 import sys
 file=sys.argv[1]; section=sys.argv[2]
@@ -20,7 +20,7 @@ with open(file) as f: lines=f.readlines()
 out=[]
 inserted=False
 for line in lines:
-    if not inserted and '<summary><b>Контекст недели' in line:
+    if not inserted and line.startswith('## Контекст недели'):
         out.append(section+'\n\n')
         inserted=True
     out.append(line)

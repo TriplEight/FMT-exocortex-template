@@ -126,7 +126,7 @@ def rebuild_compact_dashboard(text: str) -> str:
             if len(plan_rows) >= 7:
                 break
         elif plan_rows and not s.startswith("|"):
-            break  # таблица закончилась (Бюджет дня / пустая строка / </details>)
+            break  # таблица закончилась (Бюджет дня / пустая строка / следующий заголовок)
     if not plan_rows:
         return text
 
@@ -197,8 +197,7 @@ def _strip_panel_block(text: str, begin: str, end: str) -> str:
 GATE_METRICS_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "gate-metrics.sh"
 )
-GATE_SECTION_BEGIN = "<summary><b>Gate-метрики"
-GATE_SECTION_END = "</details>"
+GATE_SECTION_HEADER = "### Gate-метрики"
 
 
 def inject_gate_metrics(text: str) -> str:
@@ -228,21 +227,24 @@ def inject_gate_metrics(text: str) -> str:
         print(f"[inject_gate_metrics] failed: {e}", file=sys.stderr)
         return text
 
-    # Find <summary><b>Gate-метрики then </summary> then </details>
-    # Replace everything between </summary> and </details> with gate output.
-    idx = text.find(GATE_SECTION_BEGIN)
-    if idx == -1:
+    # Find "### Gate-метрики" header, replace everything up to the next
+    # heading line (any level) or end of text with the fresh output.
+    lines = text.splitlines(keepends=True)
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip() == GATE_SECTION_HEADER:
+            start = i
+            break
+    if start is None:
         return text
-    summary_end = text.find("</summary>", idx)
-    if summary_end == -1:
-        return text
-    summary_end += len("</summary>")
-    close = text.find(GATE_SECTION_END, summary_end)
-    if close == -1:
-        return text
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("#"):
+            end = i
+            break
 
-    new_body = "\n\n" + output + "\n\n"
-    return text[:summary_end] + new_body + text[close:]
+    new_body = lines[start:start + 1] + ["\n", output + "\n", "\n"]
+    return "".join(lines[:start]) + "".join(new_body) + "".join(lines[end:])
 
 
 def inject_panel_tile(text: str) -> str:
@@ -348,62 +350,15 @@ def collect_wp_facts(wp_dir: str) -> list[dict]:
     return facts
 
 
-def _strip_leading_details(content: str) -> str:
-    """Drop leading <details...> lines the LLM wrapped around its answer.
-
-    The canonical opening tag lives in the section header line, so any <details>
-    the LLM prepends is a duplicate with no <summary> — browsers render it as the
-    literal word "Details". Loops because the LLM occasionally stacks two openers.
-    """
-    stripped = content.lstrip("\n")
-    while stripped.lower().startswith("<details"):
-        first_nl = stripped.find("\n")
-        if first_nl == -1:
-            return ""
-        stripped = stripped[first_nl + 1:].lstrip("\n")
-    return stripped
-
-
-def _drop_trailing_closers(content: str, extra: int) -> str:
-    """Remove `extra` trailing </details> tags the LLM emitted beyond the original.
-
-    Excess closers close the outer <details> early and orphan every section below,
-    so the DayPlan tail silently disappears. Strips from the end, where stray
-    closers accumulate.
-    """
-    lines = content.rstrip().split("\n")
-    kept = []
-    for line in reversed(lines):
-        if extra > 0 and line.strip() == "</details>":
-            extra -= 1
-            continue
-        kept.append(line)
-    return "\n".join(reversed(kept))
-
-
-def has_bare_details(text: str) -> bool:
-    """True if any <details> opener lacks a <summary> within the next few lines.
-
-    A bare <details> is the "Details" rendering bug. Used as a post-fill gate so a
-    regression blocks the commit instead of reaching the pilot.
-    """
-    lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if line.strip().lower().startswith("<details"):
-            window = " ".join(lines[i + 1:i + 4]).lower()
-            if "<summary>" not in window:
-                return True
-    return False
-
-
 def split_into_chunks(text: str) -> list[dict]:
-    """Разбить текст на чанки по заголовкам ## или <details>."""
+    """Разбить текст на чанки по заголовкам верхнего уровня (##). Вложенные ### остаются
+    внутри родительского чанка."""
     chunks = []
     current_lines = []
     current_header = "preamble"
 
     for line in text.splitlines(keepends=True):
-        if line.startswith("## ") or line.strip().startswith("<details"):
+        if line.startswith("## "):
             if current_lines:
                 chunks.append({"header": current_header, "lines": current_lines, "has_pending": "<!-- PENDING" in "".join(current_lines)})
             current_header = line.strip()
@@ -437,10 +392,10 @@ def build_section_prompt(header: str, section_content: str, weekplan: str,
         "2. Ссылайся на реальные WP-номера из контекста.",
         "3. Если данных нет — напиши 'Нет данных' и удали маркер.",
         "4. Не меняй структуру markdown (таблицы, списки, жирный текст).",
-        "4a. Если секция начинается с <details> — обязательно сохрани <summary>...</summary> (если есть) и закрывающий </details> в конце секции.",
+        "4a. Никаких HTML-тегов (<details>, <summary>, <div> и др.) — только markdown-заголовки ##/### (Obsidian ломает HTML-теги).",
         "5. Верни ТОЛЬКО содержимое секции — БЕЗ заголовка секции.",
         "6. Если секция содержит таблицу — заполни ячейки с PENDING, остальные не трогай.",
-        "6a. Для таблицы 'Разбор заметок': ячейки в столбце 'Заметка' — ссылки вида [«текст»](../inbox/fleeting-notes.md) БЕЗ якоря (bold-текст не создаёт GitHub-якорей). Не добавляй #якорь. Не оставляй голый текст без ссылки.",
+        "6a. Для таблицы 'Разбор заметок': ячейки в столбце 'Заметка' — wiki-ссылки вида [[fleeting-notes|«текст»]] (НЕ markdown-ссылки — Obsidian не резолвит [текст](путь.md) как заметку).",
         "6b. Для секции 'Мир': если есть блок '**Вывод:**' с PENDING — заполни 2-4 предложениями: какие новости релевантны активным РП из WeekPlan. Без общих фраз, конкретика по WP-номерам.",
         "6c. Для таблицы 'Разбор заметок': ЗАПРЕЩЕНО выдумывать названия заметок. Используй ТОЛЬКО заголовки из 'КОНТЕКСТ: Fleeting Notes' ниже. Если контекст пустой или содержит только frontmatter — напиши 'нет заметок' в столбец 'Заметка'.",
         "",
@@ -622,43 +577,8 @@ def main() -> None:
             new_content = fill_chunk(chunk, weekplan, active_wps, calendar, cp_profile,
                                      args.proxy_url, args.proxy_secret, wp_facts,
                                      fault_profile, fleeting_notes=fleeting_notes)
-            # Structural tag protection: restore canonical <summary>, drop LLM-wrapped
-            # <details>, and balance </details> so nesting stays valid.
-            original_text = "".join(chunk["lines"])
-            header_line = chunk["lines"][0]
-            # Always restore canonical <summary> from scaffold — LLM may omit or alter it.
-            # re.sub removes whatever the LLM produced; we then prepend the original.
-            # If LLM dropped </summary> (malformed), regex doesn't match → prepend still runs,
-            # browser renders first <summary> (canonical) and ignores malformed tail.
-            if len(chunk["lines"]) > 1:
-                second_line = chunk["lines"][1]
-                if second_line.strip().startswith("<summary>"):
-                    nc = re.sub(r"<summary>.*?</summary>", "", new_content, count=1, flags=re.DOTALL).lstrip("\n")
-                    # Strip the LLM's own <details> opener from `nc` here, while it's still
-                    # leading (this is what the LLM wrapped its whole answer in, summary and
-                    # all). Doing this AFTER prepending `second_line` below is too late: the
-                    # combined string then starts with the canonical <summary>, not <details>,
-                    # so _strip_leading_details silently no-ops and the LLM's opener survives
-                    # as an orphaned bare <details> right after the summary (found 2026-07-02,
-                    # 8 sections in one DayPlan) — its matching closer is still counted as
-                    # "balanced" against the header's opener further down, so the header's own
-                    # <details> never gets closed and every section after it renders nested.
-                    nc = _strip_leading_details(nc)
-                    new_content = second_line + "\n" + nc
-            # Strip every leading <details...> line the LLM wrapped its answer in. header_line
-            # already carries the canonical opening tag; a leftover bare <details> without a
-            # <summary> renders as the literal word "Details". Loop, because the LLM sometimes
-            # emits two opening tags in a row.
-            new_content = _strip_leading_details(new_content)
-            # Balance </details> both ways. LLM may drop nested closers (add missing) or emit
-            # extras that close the outer block early and orphan the sections below (drop extras).
-            original_details_count = original_text.count("</details>")
-            new_details_count = new_content.count("</details>")
-            if new_details_count < original_details_count:
-                new_content = new_content.rstrip() + "\n</details>\n" * (original_details_count - new_details_count)
-            elif new_details_count > original_details_count:
-                new_content = _drop_trailing_closers(new_content, new_details_count - original_details_count)
             # Reconstruct chunk: keep header, replace content
+            header_line = chunk["lines"][0]
             new_lines = [header_line]  # header
             new_lines.append(new_content)
             # Ensure trailing newline if original had it
@@ -696,10 +616,12 @@ def main() -> None:
     tmp.write_text(result, encoding="utf-8")
     tmp.rename(out_path)
 
-    # Gate: a bare <details> without <summary> renders as the word "Details" in the
-    # pilot's DayPlan. Exit 2 so day-open-checks blocks the commit until it's fixed.
-    if has_bare_details(result):
-        print("[WARN] Bare <details> without <summary> detected — 'Details' rendering bug.", file=sys.stderr)
+    # Gate: HTML tags break Obsidian rendering (tables inside <details> especially).
+    # LLM sections are instructed (rule 4a) to never emit them — catch a regression
+    # here instead of letting it reach the pilot. Exit 2 so day-open-checks blocks
+    # the commit until it's fixed.
+    if re.search(r"<details|<summary|<div|<span|style=", result, re.IGNORECASE):
+        print("[WARN] HTML tag detected in filled DayPlan — Obsidian-incompatible output.", file=sys.stderr)
         sys.exit(2)
 
     if failed_sections:

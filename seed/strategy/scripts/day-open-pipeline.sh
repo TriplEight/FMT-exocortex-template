@@ -772,7 +772,7 @@ echo "  LLM Fill OK"
 # ============================================
 # 4.2. Bottleneck patch (deterministic, AFTER LLM Fill — WP-484, moved 2026-07-14)
 # llm-fill.py's has_pending check is whole-chunk: a second marker (week_context) in the
-# same <details> block as "Горлышко недели" made it regenerate that whole chunk even
+# same ## chunk as "Горлышко недели" made it regenerate that whole chunk even
 # when this script had already run first, overwriting its BOTTLENECK-PENDING/BY-SCRIPT
 # marker with unmarked prose. Running last makes this script the authoritative source.
 # ============================================
@@ -972,7 +972,7 @@ fi
 # ============================================
 echo "=== 7. Morning Digest ==="
 SHORT_HASH="${COMMIT_HASH:0:8}"
-PLAN_ROWS=$(sed -n '/<details open>/,/<\/details>/p' "$DAYPLAN_PATH" 2>/dev/null | \
+PLAN_ROWS=$(awk '/^## План на сегодня/{f=1; next} f && /^## /{exit} f' "$DAYPLAN_PATH" 2>/dev/null | \
   awk -F'|' 'NF>=6 && /\*\*WP/ {
     rp=$5; h=$6;
     gsub(/\*\*/, "", rp); gsub(/ — .*/, "", rp);

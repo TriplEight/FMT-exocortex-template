@@ -51,7 +51,7 @@ Day Close = протокол. Исполнять ТОЛЬКО пошагово �
 **2c.** `docs/WP-REGISTRY.md`: статусы + даты.
 **2d.** `inbox/open-sessions.log`: удалить строки закрытых сессий.
 **2e.** Новые репо/сервисы за день? → REPOSITORY-REGISTRY, navigation.md, MAP.002.
-**2f.** WeekReport — если есть `WeekReport W{N}.md`: добавить `<details><summary><b>Итоги {День} {Дата}</b></summary>` **перед** предыдущими итогами (обратная хронология).
+**2f.** WeekReport — если есть `WeekReport W{N}.md`: добавить раздел `## Итоги {День} {Дата}` **перед** предыдущими итогами (обратная хронология).
 <!-- Детали 2f: day-close-details.md § Шаг 2f -->
 
 **EXTENSION POINT (checks):** `bash .claude/scripts/load-extensions.sh day-close checks` → exit 0: `Read` каждый файл → выполнить.
@@ -103,7 +103,7 @@ TODAY_DAYPLAN="${IWE_GOVERNANCE_REPO:-DS-strategy}/archive/day-plans/DayPlan $(d
 [ -f "$TODAY_DAYPLAN" ] && sed -i.bak 's/^status: active$/status: closed/' "$TODAY_DAYPLAN" && rm -f "$TODAY_DAYPLAN.bak"
 ```
 Не путать с шагом 10c ниже (P1, WP-5 Ubuntu-audit): гард day-open-pipeline.sh проверяет присутствие архивного DayPlan в git, не это поле — `status: closed` служит только людям/сторонним инструментам, не текущей реализации гарда.
-**9b.** Дописать сводку в WeekReport (`<details>`, обратная хронология). Fallback на WeekPlan если нет WeekReport. Postcondition: bash-grep по паттерну `Сводка|Results` (оба языка — issue #234) → `9b OK/FAIL`.
+**9b.** Дописать сводку в WeekReport (`##` заголовок, обратная хронология). Fallback на WeekPlan если нет WeekReport. Postcondition: bash-grep по паттерну `Сводка|Results` (оба языка — issue #234) → `9b OK/FAIL`.
 `*a/*b FAIL` → НЕ помечать completed, вернуться к записи.
 <!-- Детали postconditions: day-close-details.md § Шаг 9 -->
 
@@ -160,7 +160,7 @@ Sub-agent Haiku R23 (context isolation): передать чеклист + че�
 - [ ] WakaTime + Мультипликатор: часы / бюджет ПО ФАКТУ (sessions/00-index.md перечислен; ad-hoc оценены по ходам; сверхплановое — по факту); sanity check ≥10 peer-сессий
 - [ ] Итоги дня записаны в DayPlan **(postcondition 9a: grep подтверждён)** — **N/A на strategy_day** (шаг 0в)
 - [ ] Handoff-валидация: «Завтра начать с» содержит ВСЕ pending РП с конкретным next action — **N/A на strategy_day** (шаг 0в; на strategy_day это поле живёт в WeekPlan, не DayPlan)
-- [ ] Сводка итогов записана в WeekReport (`<details>`, обратная хронология) **(postcondition 9b: grep подтверждён)**
+- [ ] Сводка итогов записана в WeekReport (`##` заголовок, обратная хронология) **(postcondition 9b: grep подтверждён)**
 - [ ] Новое репо → MAPSTRATEGIC.md + Strategy.md
 
 Все ✅ → «День закрыт.» Иначе — указать что осталось.

@@ -38,7 +38,7 @@ table_to_list() {
     # weekplan (default): # | РП | Бюджет | Статус | Дедлайн | Репо
     local format="${3:-weekplan}"
 
-    sed -n -E "/^## ${section}|<summary>.*${section}/,/^---|^<\/details>/p" "$file" \
+    awk -v s="## ${section}" 'index($0,s)==1{f=1;next} f && /^## /{exit} f' "$file" \
         | grep '^|' \
         | tail -n +3 \
         | while IFS='|' read -r _ f1 f2 f3 f4 f5 f6 _rest; do

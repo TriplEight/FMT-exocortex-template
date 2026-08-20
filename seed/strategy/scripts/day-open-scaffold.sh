@@ -355,20 +355,15 @@ render_video() {
 # enabled (data from server-news.sh or PENDING-маркеры).
 render_world() {
   local enabled
-  echo "<details>"
-  echo "<summary><b>Мир</b></summary>"
+  echo "## Мир"
   echo ""
   if [ "$YAML_PARSE_OK" != "true" ]; then
     echo "> ⚠️ \`day-rhythm-config.yaml\` не распарсился ($YAML_PARSE_ERROR) — не удалось прочитать \`news.enabled\`. Нет данных, пока конфиг не починен."
-    echo ""
-    echo "</details>"
     return 0
   fi
   enabled=$(read_yaml "news.enabled")
   if [ "$enabled" != "True" ]; then
     echo "> \`news.enabled: false\` в \`day-rhythm-config.yaml\` — секция выключена. Нет данных."
-    echo ""
-    echo "</details>"
     return 0
   fi
   bash "$IWE/scripts/server-news.sh" "$CONFIG" 2>/dev/null || {
@@ -383,8 +378,6 @@ render_world() {
   }
   echo ""
   echo "**Вывод:** <!-- PENDING: news-lens — 2-4 предложения: какие из этих новостей релевантны активным РП (WP-350, WP-330, WP-351 и др.). Использовать контекст WeekPlan + WP-Registry. -->"
-  echo ""
-  echo "</details>"
 }
 
 # --- Section: Здоровье платформы (feedback-triage report) ---
@@ -879,8 +872,8 @@ render_fleeting_notes() {
     printf '| нет заметок | — | — | ✅ |\n'
   else
     while IFS= read -r title; do
-      # Link to file without anchor — bold text has no GitHub markdown anchor
-      printf '| [«%s»](../inbox/fleeting-notes.md) | <!-- PENDING --> | <!-- PENDING --> | [ ] |\n' "$title"
+      # Wiki-style link — Obsidian не резолвит markdown-ссылки на .md как заметки
+      printf '| [[fleeting-notes|«%s»]] | <!-- PENDING --> | <!-- PENDING --> | [ ] |\n' "$title"
     done <<< "$new_notes"
   fi
 }
@@ -889,8 +882,7 @@ render_fleeting_notes() {
 render_gate_metrics() {
   local script="$TEMPLATE_SCRIPTS_DIR/gate-metrics.sh"
   local log="${HOME}/.iwe/gate-decisions.jsonl"
-  echo "<details>"
-  echo "<summary><b>Gate-метрики</b></summary>"
+  echo "### Gate-метрики"
   echo ""
   if [ ! -f "$script" ]; then
     echo "> ⚠️ Скрипт gate-metrics.sh не найден: \`$script\`"
@@ -900,8 +892,6 @@ render_gate_metrics() {
   else
     bash "$script" "$log" "$DATE" 2>/dev/null || echo "> ⚠️ gate-metrics.sh завершился с ошибкой"
   fi
-  echo ""
-  echo "</details>"
 }
 
 # --- Section: KE-очередь (отчёты на разбор) ---
@@ -1231,24 +1221,17 @@ generated_by: day-open-scaffold.sh (WP-264 Ф2)
 # Day Plan: $DAY_NUM $MONTH_RU $YEAR ($DOW_RU)
 
 <!-- СРОЧНОЕ (ТВС=С): вывести ТОЛЬКО при 🔴 (упавший smoke / сломанная интеграция / EMERGENCY в priorities.yaml / заблокированный конвейер). В зелёный день — «нет срочного». -->
-<details>
-<summary><b>🚨 Срочное</b></summary>
+## 🚨 Срочное
 
 <!-- PENDING: urgent — если в «Здоровье платформы» есть 🔴 ИЛИ в priorities.yaml пометка EMERGENCY: таблица | Что | Система | Действие | ETA |. Иначе одна строка: «— нет срочного (зелёный день)». -->
 
-</details>
-
-<details>
-<summary><b>Саморазвитие</b></summary>
+## Саморазвитие
 
 - **Изучи персональное руководство:** личное руководство (репозиторий \`personal-guide\` на твоём GitHub — см. \`/connect-guide\`)
 
 $SELF_DEV_BLOCK
 
-</details>
-
-<details open>
-<summary><b>План на сегодня</b></summary>
+## План на сегодня
 
 <!-- PENDING: today_plan — синтез таблицы плана дня.
 
@@ -1284,10 +1267,7 @@ ${STRATEGY_CONTEXT:-не найдены}
 **Carry-over из Day Close вчера ($YDAY):**
 ${DAY_CLOSE_CARRY_OVER:-нет (Day Close не найден)}
 
-</details>
-
-<details>
-<summary><b>Разбор заметок</b></summary>
+## Разбор заметок
 
 <!-- Источник: inbox/fleeting-notes.md. Строки **Title** = непрочитанные. Ссылки без якоря — bold не создаёт GitHub-якорей. -->
 
@@ -1295,10 +1275,7 @@ ${DAY_CLOSE_CARRY_OVER:-нет (Day Close не найден)}
 |---------|-----|-------------|---|
 $(render_fleeting_notes)
 
-</details>
-
-<details>
-<summary><b>Календарь ($DAY_NUM $MONTH_RU)</b></summary>
+## Календарь ($DAY_NUM $MONTH_RU)
 
 <!-- PENDING: calendar — сначала вызвать mcp__ext-google-calendar__list-calendars,
   чтобы получить собственные calendar_ids пилота (свои календари + подключённые
@@ -1313,10 +1290,7 @@ $(render_fleeting_notes)
 
 ⏱ Свободных блоков ≥1h: <!-- PENDING -->
 
-</details>
-
-<details>
-<summary><b>Здоровье платформы (QA)</b></summary>
+## Здоровье платформы (QA)
 
 $(render_bot_qa)
 
@@ -1332,38 +1306,23 @@ $(render_repo_issues)
 
 $(render_repo_activity)
 
-</details>
+## Наработки агентов
 
-<details>
-<summary><b>Наработки агентов</b></summary>
-
-<details>
-<summary><b>Ночные отчёты</b></summary>
+### Ночные отчёты
 
 $(render_scout)
 
-</details>
-
-<details>
-<summary><b>📚 KE-кандидаты (Knowledge Extraction)</b></summary>
+### 📚 KE-кандидаты (Knowledge Extraction)
 
 $(render_ke_candidates)
 
-</details>
-
 $(render_gate_metrics)
 
-<details>
-<summary><b>Авторская очистка базы знаний</b></summary>
+### Авторская очистка базы знаний
 
 $(render_content_cleanup)
 
-</details>
-
-</details>
-
-<details>
-<summary><b>Контент-план</b></summary>
+## Контент-план
 
 **Стратегия:** <!-- PENDING: 1 строка из Strategy.md (пример: club → Telegram → Дзен/Habr, N постов/нед) -->
 **TTL просрочены:** <!-- PENDING: D-NNN (истёк YYYY-MM-DD), ... или «нет просроченных» -->
@@ -1371,12 +1330,9 @@ $(render_content_cleanup)
 
 <!-- PENDING: content — таблица 1-3 тем из плана публикаций W{N}. Источник: WeekPlan или Strategy.md. -->
 
-</details>
-
 $WORLD_SECTION
 
-<details>
-<summary><b>Контекст недели (W$WEEK_NUM)</b></summary>
+## Контекст недели (W$WEEK_NUM)
 
 <!-- PENDING: bottleneck-week — запустить /bottleneck-pick --target weekplan --layer intra --horizon week --depth 1 и вставить 4-6 строк ПЕРВОЙ подсекцией: SC-failing, Bottleneck, Class (Policy/Resource/Cognitive), Этап 1, Сигнал. Source: extensions/day-open.after.md:158-191 -->
 
@@ -1384,35 +1340,21 @@ $WORLD_SECTION
 
 <!-- PENDING: week_context — фокус недели + текущий бюджет/мультипликатор + ТОС. Источник: ${IWE_GOVERNANCE_REPO:-DS-strategy}/current/WeekPlan W$WEEK_NUM*.md. -->
 
-</details>
-
-<details>
-<summary><b>Итоги вчера ($YDAY_NUM $YDAY_MONTH_RU)</b></summary>
+## Итоги вчера ($YDAY_NUM $YDAY_MONTH_RU)
 
 $(render_yesterday)
 
-</details>
-
-<details>
-<summary><b>Помидорки/ритм</b></summary>
+## Помидорки/ритм
 
 $(render_pomodoro)
 
-</details>
-
-<details>
-<summary><b>Видео</b></summary>
+## Видео
 
 $(render_video)
 
-</details>
-
-<details>
-<summary><b>Требует внимания</b></summary>
+## Требует внимания
 
 $(render_attention)
-
-</details>
 
 *Создан: $DATE (Day Open / day-open-scaffold.sh WP-264 Ф2)*
 EOF
