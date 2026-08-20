@@ -58,27 +58,81 @@ ROW_RE = re.compile(r"^\|\s*(?:~~)?(?:\*\*)?(?:WP-)?(\d{1,4})(?:\*\*)?(?:~~)?\s*
 # Имя файла WP в inbox/archive: WP-NNN-... .md или WP-NNN.md или папка WP-NNN/
 WP_NAME_RE = re.compile(r"^WP-(\d{1,4})(?:[-.].*|/)?$")
 
+# Canonical column names the registry table must expose (create-wp.sh writes the
+# same set — see scripts/create-wp.sh CANONICAL_NAMES). Header-name lookup, not a
+# fixed position: registries may carry extra legacy columns (e.g. «Активация») in
+# any order, and the writer only appends missing canonical columns at the end.
+CANONICAL_NAMES = ["#", "P", "Название", "Ст", "Репо", "Бюджет"]
+COLUMN_SYNONYMS = {
+    "Приоритет": "P",
+    "Статус": "Ст",
+    "Репозитории": "Репо",
+    "Репозиторий": "Репо",
+}
+SEPARATOR_CELL_RE = re.compile(r"^:?-{1,}:?$")
+
+
+def find_header_columns(lines: list[str]) -> dict[str, int] | None:
+    """Locate the WP table header and map canonical column name -> cell index.
+
+    bug: a fixed-position reader (cols[3] == status) assumed the registry always
+    exposes columns in create-wp.sh's exact order. A legacy/append-migrated table
+    (e.g. `# | Название | Статус | Активация | P | Репо | Бюджет`) shifts every
+    downstream index, so every row misclassified with `status == "Активация value"`
+    and active-wp.md ended up empty. Resolve indices by header name instead.
+    """
+    for i, line in enumerate(lines):
+        if i == 0 or not line.strip().startswith("|"):
+            continue
+        sep_cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if not sep_cells or not all(SEPARATOR_CELL_RE.match(c) for c in sep_cells):
+            continue
+        header_line = lines[i - 1]
+        if not header_line.strip().startswith("|"):
+            continue
+        header_cells = [c.strip() for c in header_line.strip().strip("|").split("|")]
+        col_index: dict[str, int] = {}
+        for idx, name in enumerate(header_cells):
+            canonical = COLUMN_SYNONYMS.get(name, name)
+            col_index.setdefault(canonical, idx)
+        if all(name in col_index for name in CANONICAL_NAMES):
+            return col_index
+    return None
+
 
 def parse_registry(text: str) -> tuple[list[dict], list[str]]:
     """Разбор реестра. Строка с номером РП никогда не сбрасывается молча:
     непарсибельные попадают в rows (для orphan-детекции) + в problems (PARSE-WARN)."""
     rows: list[dict] = []
     problems: list[str] = []
-    for lineno, line in enumerate(text.splitlines(), 1):
+    lines = text.splitlines()
+    col_index = find_header_columns(lines)
+    if col_index is None:
+        problems.append(
+            f"REGISTRY: заголовок таблицы с колонками {CANONICAL_NAMES} не найден — "
+            f"разбор по резервным позициям (0=#,1=P,2=Название,3=Ст,4=Репо,5=Бюджет)."
+        )
+        col_index = {"#": 0, "P": 1, "Название": 2, "Ст": 3, "Репо": 4, "Бюджет": 5}
+    min_cols = max(col_index.values()) + 1
+
+    for lineno, line in enumerate(lines, 1):
         m = ROW_RE.match(line)
         if not m:
             continue
         wp = int(m.group(1))
         cols = [c.strip() for c in line.strip("|").split("|")]
-        if len(cols) < 6:
+        if len(cols) < min_cols:
             problems.append(
-                f"WP-{wp} (строка {lineno}): колонок < 6 — строка учтена в реестре, "
+                f"WP-{wp} (строка {lineno}): колонок < {min_cols} — строка учтена в реестре, "
                 f"но не попадает в active-wp.md."
             )
-            cols = cols + [""] * (6 - len(cols))
+            cols = cols + [""] * (min_cols - len(cols))
+        def cell(name: str) -> str:
+            idx = col_index[name]
+            return cols[idx] if idx < len(cols) else ""
         # Очистка от ~~ и пробелов; берём только первый токен, чтобы
         # принять варианты вида "🔄 Ф4" (статус + пометка фазы).
-        status_raw = cols[3].replace("~~", "").strip()
+        status_raw = cell("Ст").replace("~~", "").strip()
         token = status_raw.split()[0] if status_raw else ""
         status = norm_status(token)
         if status not in ALL_STATUSES:
@@ -88,24 +142,26 @@ def parse_registry(text: str) -> tuple[list[dict], list[str]]:
             )
         rows.append({
             "wp": wp,
-            "project": cols[1].replace("~~", "").strip(),
-            "name": cols[2].strip(),
+            "id_display": cell("#").replace("~~", "").strip(),
+            "project": cell("P").replace("~~", "").strip(),
+            "name": cell("Название").strip(),
             "status": status,
             "status_display": token,
-            "repo": cols[4].strip(),
-            "budget": cols[5].strip(),
+            "repo": cell("Репо").strip(),
+            "budget": cell("Бюджет").strip(),
             "raw": line,
         })
     return rows, problems
 
 
-def clean_status_in_row(raw: str, status: str) -> str:
-    """Заменяет содержимое колонки «Ст» на очищенный статус и обрезает лишние колонки."""
-    parts = raw.split("|")
-    if len(parts) >= 6:
-        parts[4] = f" {status} "
-        parts = parts[:7]
-    return "|".join(parts) + "|"
+def build_display_row(r: dict) -> str:
+    """Render one active-wp.md row in the fixed canonical column order,
+    regardless of the source registry table's actual column order/extras."""
+    id_cell = r["id_display"] or str(r["wp"])
+    return (
+        f"| {id_cell} | {r['project'] or '—'} | {r['name']} | {r['status_display']} "
+        f"| {r['repo'] or '—'} | {r['budget'] or '—'} |"
+    )
 
 
 def render(rows: list[dict]) -> str:
@@ -126,7 +182,7 @@ def render(rows: list[dict]) -> str:
         out = ["| # | P | Название | Ст | Репо | Бюджет |",
                "|---:|---|------------------|:--:|------------------|------:|"]
         for r in items:
-            out.append(clean_status_in_row(r["raw"], r["status_display"]))
+            out.append(build_display_row(r))
         return "\n".join(out) + "\n"
 
     lines = [
