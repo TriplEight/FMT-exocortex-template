@@ -86,9 +86,24 @@ mkdir -p "$LOG_DIR"
 # Определяем день недели и тип сценария
 DAY_OF_WEEK=$(date +%u)  # 1=Mon, 7=Sun
 DATE=$(date +%Y-%m-%d)
+WEEK=$(date +%V)
 
 # Лог файл
 LOG_FILE="$LOG_DIR/$DATE.log"
+
+# bug-2026-08-31: scheduler.sh пишет STATE_DIR-маркер (используется daily-report.sh
+# для ✅/❌) только когда САМ вызывает strategist.sh и получает rc=0. Если гонку
+# выигрывает независимо запущенный systemd-юнит (iwe-strategist-morning.service /
+# -weekreview.service), маркер никогда не пишется — отчёт показывает ❌ даже при
+# полном успехе. Стратег теперь пишет маркер сам, независимо от вызывателя.
+STATE_DIR="$HOME/.local/state/exocortex"
+mkdir -p "$STATE_DIR"
+mark_scheduler_done() {
+    echo "$(date '+%H:%M:%S')" > "$STATE_DIR/$1-$DATE"
+}
+mark_scheduler_done_week() {
+    echo "$DATE $(date '+%H:%M:%S')" > "$STATE_DIR/$1-W$WEEK"
+}
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
@@ -292,6 +307,8 @@ case "$1" in
                 notify_telegram "day-plan"
             fi
         fi
+        # set -e гарантирует: если ветка выше не завершилась success, сюда не дойдём.
+        mark_scheduler_done "strategist-morning"
         ;;
     "evening")
         log "Evening: running evening review"
@@ -306,6 +323,7 @@ case "$1" in
         fi
         log "Sunday: running week review"
         run_claude "week-review" "claude-opus-4-7"
+        mark_scheduler_done_week "strategist-week-review"
         # Fallback push for Knowledge Index (week-review creates a post there)
         # KI_REPO may not exist for all users — guard with [ -d ]
         KI_REPO="$HOME/IWE/DS-Knowledge-Index"
@@ -317,11 +335,13 @@ case "$1" in
     "session-prep")
         log "Manual: running session prep"
         run_claude "session-prep" "claude-sonnet-4-6"
+        mark_scheduler_done "strategist-morning"
         notify_telegram "session-prep"
         ;;
     "day-plan")
         log "Manual: running day plan"
         run_claude "day-plan" "claude-sonnet-4-6"
+        mark_scheduler_done "strategist-morning"
         notify_telegram "day-plan"
         ;;
     "note-review")
