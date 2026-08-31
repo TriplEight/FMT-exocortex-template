@@ -113,7 +113,7 @@ first reading the developer-guide. If either check fails, it belongs in the deve
 Platform files (L1) are shared across all IWE users — never include personal data:
 
 - ❌ Real email addresses, calendar IDs, account usernames, domain names
-- ❌ Local paths containing your username (`/home/yourname/`, `/Users/yourname/`)
+- ❌ Local paths containing your username (home-directory paths, e.g. Linux `/home` or macOS `/Users`)
 - ❌ API tokens, client IDs, OAuth credentials of any kind
 
 User-specific values must use `{{PLACEHOLDER}}` syntax and be read from `params.yaml`
