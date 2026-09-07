@@ -28,7 +28,7 @@ FMT-exocortex-template/              DS-strategy/ (отдельный репо)
 **Потоки данных:**
 - Промпты (PLATFORM) → `prompts/` (3 базовых) + `memory/protocol-*.md`
 - Результаты (PERSONAL) → DS-strategy/ (отдельный приватный репо, не затрагивается обновлениями)
-- Входные данные: MEMORY.md, MAPSTRATEGIC.md (из каждого репо), WakaTime
+- Входные данные: MEMORY.md, MAPSTRATEGIC.md (из каждого репо)
 
 ---
 

@@ -24,7 +24,7 @@ schema_version: 1
 | Триггер | Аргумент | Skill |
 |---------|---------|-------|
 | «закрываю сессию» / «всё» / «закрывай» | `close` или `close session` | Quick Close (ниже, inline) |
-| «закрываю день» / «итоги дня» | `close day` | `.claude/skills/day-close/SKILL.md` — **шаг 6: WakaTime + Мультипликатор IWE** |
+| «закрываю день» / «итоги дня» | `close day` | `.claude/skills/day-close/SKILL.md` — **шаг 6: Мультипликатор IWE** |
 | «закрываю неделю» / «итоги недели» | `week-close` | `.claude/skills/week-close/SKILL.md` |
 
 > **`close` без уточнения** → Quick Close (сессия) по умолчанию.
@@ -229,10 +229,10 @@ fi
 
 > **Полная спецификация → `.claude/skills/day-close/SKILL.md` § 6.**
 
-- **WakaTime-источник:** CLI `~/.wakatime/wakatime-cli --today` → если недоступен: Neon `domain_event WHERE event_type='coding_time'` за дату (fallback).
-- **Мультипликатор** = сумма бюджетов закрытых РП за день / WakaTime (сек). Формат: `N.Nx`.
-- **Эмиссия:** после вычисления — `day_close` событие в domain_event, `external_id = "day-close-YYYY-MM-DD"` (ON CONFLICT DO NOTHING — идемпотентно). Payload: `{wakatime_h, multiplier, date, session_id, source}`.
-- **Pending-мультипликатор (если Day Close не успел):** Day Open шаг 1 «Вчера» — при отсутствии записи `day_close` за вчера пересчитать из Neon WakaTime (WakaTime API `summaries?start={вчера}&end={вчера}`).
+- **Источник времени:** внешний time-трекер, если подключён (иначе мультипликатор не считается).
+- **Мультипликатор** = сумма бюджетов закрытых РП за день  / физическое время (сек). Формат: `N.Nx`.
+- **Эмиссия:** после вычисления — `day_close` событие в domain_event, `external_id = "day-close-YYYY-MM-DD"` (ON CONFLICT DO NOTHING — идемпотентно). Payload: `{physical_time_h, multiplier, date, session_id, source}`.
+- **Pending-мультипликатор (если Day Close не успел):** Day Open шаг 1 «Вчера» — при отсутствии записи `day_close` за вчера пересчитать из внешнего источника времени, если подключён.
 
 ## Deferred (отложены до Day Close)
 

@@ -19,7 +19,7 @@ description: "Протокол ОРЗ — пошаговые инструкци�
 
 > **Триггер:** «открывай» / «открывай день». Полный алгоритм → `.claude/skills/day-open/SKILL.md`. **Исполнение:** пошагово через TodoWrite (каждый шаг = задача, блокирующее). Аналогично Close.
 
-> **Вчерашний WakaTime (pending-мультипликатор):** в шаге 1 «Вчера» — проверить наличие `day_close` записи за вчера в Neon (`domain_event WHERE event_type='day_close' AND external_id='day-close-{вчера}'`). Если отсутствует: запросить WakaTime API `summaries?start={вчера}&end={вчера}` → пересчитать мультипликатор → дозаписать в domain_event. Причина: `--today` CLI не даёт данных за прошлый день (WP-299 Ф4 п.3).
+> **Pending-мультипликатор (если Day Close не успел):** в шаге 1 «Вчера» — проверить наличие `day_close` записи за вчера в Neon (`domain_event WHERE event_type='day_close' AND external_id='day-close-{вчера}'`). Если отсутствует: пересчитать мультипликатор из внешнего источника времени (если подключён) → дозаписать в domain_event. Если источник не подключён — пропустить (multiplier_enabled: false).
 
 ## § Масштаб: Сессия (Session Open)
 

@@ -387,7 +387,7 @@ fi
 # Проверка в обе стороны:
 #   (a) FAIL: hook упомянут в settings.json, но файла нет в .claude/hooks/
 #   (b) WARN: hook есть в .claude/hooks/, но не упомянут ни в одном settings.json
-#       (может быть вызываем напрямую, например wakatime-heartbeat.sh)
+#       (может быть вызываем напрямую)
 echo -n "[7/7] Hooks cross-ref (settings.json ↔ .claude/hooks/)... "
 CHECK7_FAIL=0
 HOOKS_DIR="$TEMPLATE_DIR/.claude/hooks"
@@ -410,7 +410,7 @@ else
 
     # Hooks intentionally user-deployed (installed to ~/.claude/hooks/ via skill,
     # registered in user settings.local.json — not project settings.json by design).
-    USER_DEPLOYED_HOOKS=("wakatime-heartbeat.sh")
+    USER_DEPLOYED_HOOKS=()
 
     ORPHAN_WARN=0
     for hook in "$HOOKS_DIR"/*.sh; do
@@ -421,7 +421,7 @@ else
         # контракт в собственной шапке. Новый неклассифицированный файл всё
         # равно даст warning и потребует решения владельца.
         grep -q '^# claude-hook: false — ' "$hook" && continue
-        # Skip known user-deployed hooks (see .claude/skills/setup-wakatime/SKILL.md)
+        # Skip known user-deployed hooks
         skip=0
         for ud in "${USER_DEPLOYED_HOOKS[@]}"; do [ "$name" = "$ud" ] && skip=1 && break; done
         [ "$skip" -eq 1 ] && continue

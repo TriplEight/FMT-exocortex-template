@@ -472,17 +472,6 @@ skills:
     - day-close
     - audit-installation
     - week-close
-  - id: setup-wakatime
-    name: "setup-wakatime"
-    description: "Set up WakaTime time-tracking for Claude Code and VS Code."
-    version: 0.0.0
-    layer: unknown
-    status: active
-    triggers:
-      slash: []
-    depends_on: []
-    invoked_by:
-    - setup-wakatime
   - id: skill-creator
     name: "skill-creator"
     description: "|"

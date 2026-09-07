@@ -68,6 +68,19 @@ check_ran_week() {
     return 1
 }
 
+# WP-34: гонка чекера со стартом сервисов (boot catch-up 2026-09-07: чекер в 12:20:02,
+# strategist-morning работал 12:20:00–12:26:08 → маркеры ещё не записаны → ложный ❌).
+# Ждём завершения активных iwe-сервисов до чтения маркеров (макс 15 мин).
+wait_for_unit() {
+    local unit="$1" waited=0
+    while systemctl --user is-active --quiet "$unit" 2>/dev/null && (( waited < 900 )); do
+        sleep 15
+        waited=$((waited + 15))
+    done
+}
+wait_for_unit iwe-strategist-morning.service
+wait_for_unit iwe-strategist-weekreview.service
+
 check_interval() {
     local marker="$1-last"
     if [ -f "$STATE_DIR/$marker" ]; then

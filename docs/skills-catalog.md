@@ -41,7 +41,6 @@
 | `/platform-bottleneck` | Скилл IWE — см. тело файла |
 | `/restore-exocortex` | Restore IWE memory from an exocortex backup on a new device or after data loss — NL wrapper around restore-fr… |
 | `/run-protocol` | Step-by-step execution of the OWC protocol with mandatory checkpoint at each step. Prevents skipping steps (i… |
-| `/setup-wakatime` | Set up WakaTime time-tracking for Claude Code and VS Code. |
 | `/skill-creator` | | |
 | `/strategy-session` | Стратегическая сессия — диспетчер. День-0 (нет Strategy.md/WeekPlan) → initial flow (цели, неудовлетворённост… |
 | `/think` | ADI-cycle structured reasoning (Abduction-Deduction-Induction-Audit-Decide). Use for complex decisions when m… |

@@ -1708,7 +1708,7 @@ printf '{}\n' > "$T26_ROOT/DS-strategy/exocortex/day-rhythm-config.yaml"
 IWE_WORKSPACE="$T26_ROOT" IWE_GOVERNANCE_REPO=DS-strategy \
   bash "$TEMPLATE_DIR/scripts/day-open-scaffold.sh" 2026-08-08 > "$T26_ROOT/dayplan.md"
 if grep -A1 '^\*\*Бюджет дня:' "$T26_ROOT/dayplan.md" | \
-   grep -q 'только «~Yh РП всего», без физического времени/WakaTime/мультипликатора'; then
+   grep -q 'только «~Yh РП всего», без физического времени/мультипликатора'; then
     pass "T26: deterministic DayPlan scaffold selects the multiplier-off budget contract"
 else
     fail "T26: DayPlan scaffold still requests physical time or multiplier"

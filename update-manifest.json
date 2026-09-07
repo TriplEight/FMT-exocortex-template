@@ -500,10 +500,6 @@
       "sha256": "4e1cf3cb33c20d1f10c15ca81fb4ba842da7716d4b16fd50fa0af17ea8afd387"
     },
     {
-      "path": ".claude/skills/setup-wakatime/SKILL.md",
-      "sha256": "0df0e6e859aed5d4394b2e646896abc77aec777b17be303f332e812297e9458d"
-    },
-    {
       "path": ".claude/skills/skill-creator/SKILL.md",
       "sha256": "c492e3b80ee28196d50eac8c7858d9044ebe74fcb9ad7ed05c31c9bc6c21c0b8"
     },
@@ -1674,10 +1670,6 @@
     {
       "path": "roles/strategist/scripts/cleanup-processed-notes.py",
       "sha256": "d8905fabfc9e950cc38465572ee4a3ed67b8288fbcb22a5958d530f073f6584c"
-    },
-    {
-      "path": "roles/strategist/scripts/fetch-wakatime.sh",
-      "sha256": "6f0ddd6e7ee4e4ae0abf44234de64b2bd0ea1a688255e3d0729af4df2f183689"
     },
     {
       "path": "roles/strategist/scripts/launchd/com.strategist.morning.plist",

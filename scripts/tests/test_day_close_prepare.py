@@ -17,7 +17,7 @@ SCRIPT = Path(__file__).parent.parent / "day-close-prepare.sh"
 DIGEST_SECTIONS = [
     "1. COMMITS TODAY", "2. DIRTY REPOS", "3. OPEN SESSIONS LOG",
     "4. MEMORY DRIFT", "5. INDEX HEALTH", "6. LESSON / MEMORY STATS",
-    "7. WAKATIME", "8. PEER SESSIONS TODAY", "9. DAYPLANS IN current/",
+    "7. PEER SESSIONS TODAY", "8. DAYPLANS IN current/",
     "10. DONE WP CONTEXTS IN inbox/", "11. WEEKREPORT",
 ]
 

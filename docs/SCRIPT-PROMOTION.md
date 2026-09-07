@@ -35,7 +35,6 @@
 | `$HOME/IWE` | `${WORKSPACE_DIR:-$HOME/IWE}` |
 | `$HOME/IWE/PACK-personal` | `params.yaml` → пользовательский ключ |
 | Личные пути (governance, knowledge-index) | `params.yaml` параметр + graceful skip если пусто |
-| WakaTime CLI путь | `${WAKATIME_CLI:-$HOME/.wakatime/wakatime-cli}` |
 | FMT путь | `${FMT_PATH:-${WORKSPACE_DIR}/FMT-exocortex-template}` |
 
 Правило: скрипт читает параметры из `${WORKSPACE_DIR}/params.yaml`. Если
