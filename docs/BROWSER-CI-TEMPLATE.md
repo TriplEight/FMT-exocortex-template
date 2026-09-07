@@ -53,6 +53,6 @@ Do not suggest skills more than once every 5 turns. If the user declines, do not
 - Local file system access (`ReadFile`, `WriteFile` for local paths)
 - Shell scripts, git CLI, pre-commit hooks
 - Multi-agent coordination via local-gateway
-- VS Code extensions (WakaTime, etc.)
+- VS Code extensions
 
 For these, use VS Code with Claude Code.

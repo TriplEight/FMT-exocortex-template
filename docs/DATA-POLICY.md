@@ -41,7 +41,6 @@ IWE доставляется двумя способами: **дистрибут
 |--------|-------------|---------|
 | **Anthropic API** (Claude) | Промпт + профиль + текст вопроса | При каждом запросе |
 | **GitHub** | Содержимое репозиториев | При push |
-| **WakaTime** (опционально) | Метаданные (проект, язык, время). **НЕ** содержимое файлов | Постоянно |
 | **MCP iwe-knowledge** (Gateway) | Поисковые запросы (текст). **Без** PII | При поиске |
 
 Anthropic **не использует данные API для обучения** ([API Terms](https://www.anthropic.com/api-terms)).
@@ -85,7 +84,7 @@ Anthropic **не использует данные API для обучения**
 Вы можете в любой момент:
 - Удалить данные в боте
 - Удалить локальные файлы
-- Отключить WakaTime, отозвать GitHub OAuth
+- Отозвать GitHub OAuth
 
 ---
 
@@ -127,7 +126,6 @@ Anthropic **не использует данные API для обучения**
 
 | SaaS | Self-hosted |
 |------|------------|
-| WakaTime | [Wakapi](https://github.com/muety/wakapi) |
 | GitHub | [Gitea](https://gitea.io/) или [GitLab Self-Managed](https://about.gitlab.com/install/) |
 
 ---

@@ -256,9 +256,27 @@ acquire_lock() {
     trap "rm -rf \"$lockdir\" 2>/dev/null" EXIT
 }
 
-# Читаем strategy_day из конфига (L4 Personal)
-RHYTHM_CONFIG="$HOME/.claude/projects/-Users-$(whoami)-IWE/memory/day-rhythm-config.yaml"
-STRATEGY_DAY_NAME=$(grep 'strategy_day:' "$RHYTHM_CONFIG" 2>/dev/null | awk '{print $2}' || echo "monday")
+# Читаем strategy_day из конфига (L4 Personal) — кросс-платформенный резолв (WP-34)
+find_rhythm_config() {
+    local cand
+    for cand in \
+        "${IWE_WORKSPACE:-/nonexistent}/memory/day-rhythm-config.yaml" \
+        "$HOME/.claude/projects/-Users-$(whoami)-IWE/memory/day-rhythm-config.yaml" \
+        "$HOME/Documents/Obsidian_notes/IWE/memory/day-rhythm-config.yaml" \
+        "$HOME"/.claude/projects/*IWE/memory/day-rhythm-config.yaml
+    do
+        [ -f "$cand" ] && { echo "$cand"; return 0; }
+    done
+    return 1
+}
+if RHYTHM_CONFIG=$(find_rhythm_config); then
+    log "INFO: rhythm config: $RHYTHM_CONFIG"
+else
+    RHYTHM_CONFIG=""
+    log "WARN: day-rhythm-config.yaml not found, defaulting strategy_day=monday (see WP-34)"
+fi
+STRATEGY_DAY_NAME=$(grep 'strategy_day:' "$RHYTHM_CONFIG" 2>/dev/null | awk '{print $2}')
+: "${STRATEGY_DAY_NAME:=monday}"
 # Конвертируем имя дня в номер (1=Mon..7=Sun)
 case "$STRATEGY_DAY_NAME" in
     monday)    STRATEGY_DAY_NUM=1 ;;

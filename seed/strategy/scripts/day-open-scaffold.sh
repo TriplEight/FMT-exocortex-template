@@ -44,7 +44,7 @@ if [ -f "$PARAMS_FILE" ] && grep -qE '^multiplier_enabled:[[:space:]]*false([[:s
   MULTIPLIER_ENABLED="false"
 fi
 if [ "$MULTIPLIER_ENABLED" = "false" ]; then
-  BUDGET_FORMAT_HINT='<!-- PENDING: budget — посчитать после плана; multiplier_enabled: false → только «~Yh РП всего», без физического времени/WakaTime/мультипликатора. -->'
+  BUDGET_FORMAT_HINT='<!-- PENDING: budget — посчитать после плана; multiplier_enabled: false → только «~Yh РП всего», без физического времени/мультипликатора. -->'
 else
   BUDGET_FORMAT_HINT='<!-- PENDING: budget — посчитать после плана, формат см. templates-dayplan.md (бюджет РП всего / физ / мультипликатор). -->'
 fi

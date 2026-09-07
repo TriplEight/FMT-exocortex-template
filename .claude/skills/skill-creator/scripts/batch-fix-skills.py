@@ -16,7 +16,7 @@ SKIP = {"agent-fault", "apply-captures", "skill-creator"}
 # executor:script + deterministic:true → agents: none, interaction: one-shot
 SCRIPT_EXECUTOR = {
     "check-secret", "connect-guide", "consent", "extend",
-    "iwe-bug-report", "lesson-close", "setup-wakatime", "transcribe", "w-reflection"
+    "iwe-bug-report", "lesson-close", "transcribe", "w-reflection"
 }
 
 # Skills where ## Scope should be renamed to ## When to use (Scope = When-to-use content)
