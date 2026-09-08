@@ -2504,6 +2504,10 @@
       "sha256": "b20cd35e65205ccd4fe426f8dc03ded24e860589662fb02a09e4d95889dee270"
     },
     {
+      "path": "setup/test-delivery-route-label.sh",
+      "sha256": "34f1b7f0593c52b7d71b6b49cfe0f4db79405a3cba206ed2ff7b00352af32d6f"
+    },
+    {
       "path": "shared/rubrics/form-089.yaml",
       "sha256": "56d865e1facca25fd789a85fd0625c4322936c754d9d8883ad5b6729ac7c48ff"
     },
