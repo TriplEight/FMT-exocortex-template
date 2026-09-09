@@ -53,7 +53,11 @@ def norm_status(token: str) -> str:
 
 # Строка-РП: `| 312 | P2 | **Название** | 🔄 | repo | 8h |`
 # Done-вариант: `| ~~306~~ | ~~P3~~ | ~~Название~~ | ✅ | ~~repo~~ | ~~4h~~ |`
-ROW_RE = re.compile(r"^\|\s*(?:~~)?(?:\*\*)?(?:WP-)?(\d{1,4})(?:\*\*)?(?:~~)?\s*\|")
+# Wiki-link-вариант (WP-36): `| [[inbox/WP-036\|36]] | ... | **[[inbox/WP-036\|Title]]** | ...`
+ROW_RE = re.compile(
+    r"^\|\s*(?:~~)?(?:\*\*)?(?:\[\[inbox/[^\]|]*\\?\|)?(?:WP-)?(\d{1,4})"
+    r"(?:\]\])?(?:\*\*)?(?:~~)?\s*\|"
+)
 
 # Имя файла WP в inbox/archive: WP-NNN-... .md или WP-NNN.md или папка WP-NNN/
 WP_NAME_RE = re.compile(r"^WP-(\d{1,4})(?:[-.].*|/)?$")
@@ -120,7 +124,7 @@ def parse_registry(text: str) -> tuple[list[dict], list[str]]:
         if not m:
             continue
         wp = int(m.group(1))
-        cols = [c.strip() for c in line.strip("|").split("|")]
+        cols = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
         if len(cols) < min_cols:
             problems.append(
                 f"WP-{wp} (строка {lineno}): колонок < {min_cols} — строка учтена в реестре, "
