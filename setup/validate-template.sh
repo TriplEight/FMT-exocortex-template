@@ -82,6 +82,34 @@ if [ "$MODE" = "staged" ]; then
     fi
 fi
 
+# issue #547: paths the manifest deliberately freezes out of delivery
+# (excluded_paths) never get refreshed on forks — an author-content hit there
+# is permanent and unactionable for a fork owner, so excluding a path from
+# delivery while including it in this scan makes the two rules contradict
+# each other forever. Scope: ONLY check [1/5] (author-content); the other
+# checks below intentionally still see excluded paths — this must not become
+# a general validation bypass.
+EXCLUDED_LIST=$(jq -r '.excluded_paths[]? // empty' "$TEMPLATE_DIR/update-manifest.json" 2>/dev/null || true)
+is_excluded_path() {
+    local rel="$1" ex
+    [ -n "$EXCLUDED_LIST" ] || return 1
+    while IFS= read -r ex; do
+        [ -n "$ex" ] || continue
+        [ "$rel" = "$ex" ] && return 0
+        case "$rel" in "$ex"/*) return 0 ;; esac
+    done <<< "$EXCLUDED_LIST"
+    return 1
+}
+filter_excluded_hits() {
+    # stdin: grep -r output "<abs-path>:<line>:<text>" — drop excluded_paths rows
+    local line abs rel
+    while IFS= read -r line; do
+        abs="${line%%:*}"
+        rel="${abs#"$TEMPLATE_DIR"/}"
+        is_excluded_path "$rel" || printf '%s\n' "$line"
+    done
+}
+
 # 1. Нет автор-специфичного контента
 echo -n "[1/5] Author-specific content... "
 CHECK1_FAIL=0
@@ -101,6 +129,7 @@ for pattern in "tserentserenov" "PACK-MIM" "aist_bot_newarchitecture" \
             case "$f" in
                 guide-kit/*) continue ;;  # vendored copy is derived-only (WP-483) — checked by its upstream CI
             esac
+            is_excluded_path "$f" && continue  # frozen out of delivery (#547)
             case "$f" in
                 *.md|*.sh|*.py|*.json|*.plist|*.yaml) ;;
                 *) continue ;;
@@ -129,7 +158,8 @@ for pattern in "tserentserenov" "PACK-MIM" "aist_bot_newarchitecture" \
                 --exclude='CHANGELOG.md' --exclude='aisystant-sync-targets.yaml' \
                 --exclude='translation-manifest.yaml' --exclude-dir='guide-kit' 2>/dev/null \
                 | grep -v 'github.com/' | grep -v 'docs/adr/' | grep -v 'githubusercontent\.com' \
-                | grep -viE 'TserenTserenov/(FMT-exocortex-template|ZP|SPF)' | wc -l | tr -d ' ' || true)
+                | grep -viE 'TserenTserenov/(FMT-exocortex-template|ZP|SPF)' \
+                | filter_excluded_hits | wc -l | tr -d ' ' || true)
     fi
     if [ "$count" -gt 0 ]; then
         [ "$CHECK1_FAIL" -eq 0 ] && echo "FAIL"
@@ -143,7 +173,8 @@ for pattern in "tserentserenov" "PACK-MIM" "aist_bot_newarchitecture" \
                 --exclude='CHANGELOG.md' --exclude='aisystant-sync-targets.yaml' \
                 --exclude='translation-manifest.yaml' --exclude-dir='guide-kit' 2>/dev/null \
                 | grep -v 'github.com/' | grep -v 'docs/adr/' | grep -v 'githubusercontent\.com' \
-                | grep -viE 'TserenTserenov/(FMT-exocortex-template|ZP|SPF)' | head -3 || true
+                | grep -viE 'TserenTserenov/(FMT-exocortex-template|ZP|SPF)' \
+                | filter_excluded_hits | head -3 || true
         fi
         CHECK1_FAIL=1
         FAIL=1
@@ -217,13 +248,19 @@ HARDCODE_SCAN_INCLUDES=(--include="*.md" --include="*.sh" --include="*.json" --i
 # files" в своём --help, но фактически сканировал весь репозиторий).
 # Печатает совпадение-count в stdout, построчные hits — в файл $3.
 hardcode_scan_staged() {
-    local pattern="$1" exclude_re="$2" hits_file="$3"
+    # $4 (optional): regex of file PATHS to skip for this scan only — the
+    # $2 exclude_re filters content lines (no filename in them), so per-file
+    # exceptions cannot be expressed there (WP-529 F6).
+    local pattern="$1" exclude_re="$2" hits_file="$3" skip_files_re="${4:-}"
     local f file_hits count=0
     : > "$hits_file"
     while IFS= read -r f; do
         case "$f" in
             */validate-template.sh|validate-template.sh|*/setup.sh|setup.sh|CHANGELOG.md) continue ;;
         esac
+        if [ -n "$skip_files_re" ] && echo "$f" | grep -qE "$skip_files_re"; then
+            continue
+        fi
         case "$f" in
             *.md|*.sh|*.json|*.plist) ;;
             *) continue ;;
@@ -282,7 +319,16 @@ if [ "$MODE" = "installed" ]; then
     echo "SKIP (installed mode — CLAUDE_PATH может быть /opt/homebrew/...)"
 elif [ "$MODE" = "staged" ]; then
     TMPDIR_CHECK3_HITS_FILE="$(mktemp)"
-    count=$(hardcode_scan_staged '/opt/homebrew' 'README\.md|PLATFORM-COMPAT\.md|validate-template\.yml|/usr/local/bin.*:/opt/homebrew' "$TMPDIR_CHECK3_HITS_FILE")
+    # The shipped resolver copies are sanctioned exceptions (WP-529 F6,
+    # #453/#463): their job is enumerating STANDARD system Python locations
+    # (/opt/homebrew is stock macOS Apple Silicon), not an author-machine leak.
+    # secret-bypass-lib.sh (WP-544 Д28) is the same class: it resolves
+    # jq/python3 across the standard FHS locations on macOS (both Intel
+    # /usr/local/bin and Apple Silicon /opt/homebrew/bin) and Linux (/usr/bin,
+    # /bin), falling back to PATH-based `command -v` only for non-standard
+    # layouts (NixOS) — an absolute-path-first resolver by design, not a
+    # hardcoded personal path.
+    count=$(hardcode_scan_staged '/opt/homebrew' '/usr/local/bin.*:/opt/homebrew' "$TMPDIR_CHECK3_HITS_FILE" '^README\.md$|^docs/PLATFORM-COMPAT\.md$|^\.github/workflows/validate-template\.yml$|^\.claude/lib/find-python3\.sh$|^scripts/lib/find-python3\.sh$|^seed/strategy/scripts/lib/find-python3\.sh$|^\.claude/hooks/secret-bypass-lib\.sh$|^scripts/tests/test_issue_463_setup_reuses_resolved_python3\.sh$')
     if [ "$count" -gt 0 ]; then
         echo "FAIL ($count hits)"
         head -3 "$TMPDIR_CHECK3_HITS_FILE" || true
@@ -292,8 +338,13 @@ elif [ "$MODE" = "staged" ]; then
     fi
     rm -f "$TMPDIR_CHECK3_HITS_FILE"
 else
+    # scripts/lib/find-python3.sh: sanctioned exception (WP-529 F6, #453/#463) —
+    # the resolver's whole job is enumerating STANDARD system python locations
+    # (/opt/homebrew is stock macOS Apple Silicon), not an author-machine leak.
     count=$(grep -rn '/opt/homebrew' "$TEMPLATE_DIR" "${HARDCODE_SCAN_INCLUDES[@]}" \
             --exclude='validate-template.sh' --exclude='setup.sh' \
+            --exclude='find-python3.sh' --exclude='test_issue_463_setup_reuses_resolved_python3.sh' \
+            --exclude='secret-bypass-lib.sh' \
             --exclude='CHANGELOG.md' 2>/dev/null \
             | grep -v 'README.md' \
             | grep -v 'PLATFORM-COMPAT.md' \
@@ -304,6 +355,8 @@ else
         echo "FAIL ($count hits)"
         grep -rn '/opt/homebrew' "$TEMPLATE_DIR" "${HARDCODE_SCAN_INCLUDES[@]}" \
             --exclude='validate-template.sh' --exclude='setup.sh' \
+            --exclude='find-python3.sh' --exclude='test_issue_463_setup_reuses_resolved_python3.sh' \
+            --exclude='secret-bypass-lib.sh' \
             --exclude='CHANGELOG.md' 2>/dev/null \
             | grep -v 'README.md' | grep -v 'PLATFORM-COMPAT.md' \
             | grep -v 'validate-template.yml' \
@@ -387,7 +440,7 @@ fi
 # Проверка в обе стороны:
 #   (a) FAIL: hook упомянут в settings.json, но файла нет в .claude/hooks/
 #   (b) WARN: hook есть в .claude/hooks/, но не упомянут ни в одном settings.json
-#       (может быть вызываем напрямую)
+#       (может быть вызываем напрямую, например wakatime-heartbeat.sh)
 echo -n "[7/7] Hooks cross-ref (settings.json ↔ .claude/hooks/)... "
 CHECK7_FAIL=0
 HOOKS_DIR="$TEMPLATE_DIR/.claude/hooks"
@@ -410,7 +463,7 @@ else
 
     # Hooks intentionally user-deployed (installed to ~/.claude/hooks/ via skill,
     # registered in user settings.local.json — not project settings.json by design).
-    USER_DEPLOYED_HOOKS=()
+    USER_DEPLOYED_HOOKS=("wakatime-heartbeat.sh")
 
     ORPHAN_WARN=0
     for hook in "$HOOKS_DIR"/*.sh; do
@@ -421,7 +474,7 @@ else
         # контракт в собственной шапке. Новый неклассифицированный файл всё
         # равно даст warning и потребует решения владельца.
         grep -q '^# claude-hook: false — ' "$hook" && continue
-        # Skip known user-deployed hooks
+        # Skip known user-deployed hooks (see .claude/skills/setup-wakatime/SKILL.md)
         skip=0
         for ud in "${USER_DEPLOYED_HOOKS[@]}"; do [ "$name" = "$ud" ] && skip=1 && break; done
         [ "$skip" -eq 1 ] && continue

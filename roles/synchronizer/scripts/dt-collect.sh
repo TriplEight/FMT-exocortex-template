@@ -2,7 +2,7 @@
 # dt-collect.sh — сбор данных активности для ЦД (WP-106, WP-139)
 #
 # Архитектура: ядро (L3, шаблон) + плагины (L4, personal)
-#   Ядро: git, sessions, WP, health, multiplier, registry, Pack, notes, scheduler reports
+#   Ядро: WakaTime, git, sessions, WP, health, multiplier, registry, Pack, notes, scheduler reports
 #   Плагины: collectors.d/*.sh — персональные коллекторы (Scout, QA бота, публикации и др.)
 #
 # Плагин = bash-файл с функцией collect_NAME() → stdout JSON + комментарий TARGET
@@ -16,6 +16,7 @@
 #
 # Триггер: scheduler.sh dispatch dt-collect (ежедневно, после code-scan)
 # Зависимости:
+#   WAKATIME_API_KEY  — в ~/.config/aist/env
 #   NEON_URL          — в ~/.config/aist/env (connection string)
 #   DT_USER_ID        — в ~/.config/aist/env (Ory UUID)
 
@@ -66,8 +67,80 @@ if [ "$DRY_RUN" = false ]; then
 fi
 
 # ============================================================
-# 1. (removed) time-tracker collection — WP-34: pilot never uses a tracker
+# 1. WakaTime
 # ============================================================
+
+collect_wakatime() {
+    if [ -z "${WAKATIME_API_KEY:-}" ]; then
+        log "WAKATIME_API_KEY not set — skipping WakaTime"
+        echo "{}"
+        return
+    fi
+
+    local ENCODED
+    ENCODED=$(echo -n "$WAKATIME_API_KEY" | base64)
+    local API="https://wakatime.com/api/v1/users/current"
+
+    # Today
+    local TODAY_RESP
+    TODAY_RESP=$(curl -s -H "Authorization: Basic $ENCODED" "$API/summaries?start=$DATE&end=$DATE" 2>/dev/null || echo "{}")
+
+    # Last 7 days
+    local D7=$(portable_date_offset 7)
+    local WEEK_RESP
+    WEEK_RESP=$(curl -s -H "Authorization: Basic $ENCODED" "$API/summaries?start=$D7&end=$DATE" 2>/dev/null || echo "{}")
+
+    # Last 30 days
+    local D30=$(portable_date_offset 30)
+    local MONTH_RESP
+    MONTH_RESP=$(curl -s -H "Authorization: Basic $ENCODED" "$API/summaries?start=$D30&end=$DATE" 2>/dev/null || echo "{}")
+
+    python3 -c "
+import sys, json
+
+def safe_load(s):
+    try:
+        return json.loads(s)
+    except:
+        return {}
+
+today = safe_load('''$TODAY_RESP''')
+week = safe_load('''$WEEK_RESP''')
+month = safe_load('''$MONTH_RESP''')
+
+def total_seconds(resp):
+    try:
+        return int(resp['cumulative_total']['seconds'])
+    except:
+        return 0
+
+def active_days(resp):
+    try:
+        return sum(1 for d in resp.get('data', []) if d.get('grand_total', {}).get('total_seconds', 0) > 0)
+    except:
+        return 0
+
+def top_items(resp, key, limit=10):
+    agg = {}
+    for day in resp.get('data', []):
+        for item in day.get(key, []):
+            name = item.get('name', '?')
+            agg[name] = agg.get(name, 0) + item.get('total_seconds', 0)
+    return sorted([{'name': k, 'seconds': int(v)} for k, v in agg.items()],
+                  key=lambda x: x['seconds'], reverse=True)[:limit]
+
+result = {
+    'coding_seconds_today': total_seconds(today),
+    'coding_seconds_7d': total_seconds(week),
+    'coding_seconds_30d': total_seconds(month),
+    'coding_active_days_30d': active_days(month),
+    'top_projects': top_items(month, 'projects', 10),
+    'top_languages': top_items(month, 'languages', 5),
+    'top_editors': top_items(month, 'editors', 5),
+}
+print(json.dumps(result))
+" 2>/dev/null || echo "{}"
+}
 
 # ============================================================
 # 2. Git Stats (все репо в $WORKSPACE/)
@@ -403,12 +476,12 @@ def parse_mult_section_budget(filepath):
     for line in content.split('\\n'):
         if 'Бюджет закрыт' not in line:
             continue
-        # Skip table header rows only (e.g. '| День | Физ. время | Бюджет закрыт | Мультипликатор |')
-        # Inline day-summary lines like '**Физ. время:** ... | **Бюджет закрыт:** ~27h | **Мультипликатор:**...'
+        # Skip table header rows only (e.g. '| День | WakaTime | Бюджет закрыт | Мультипликатор |')
+        # Inline day-summary lines like '**WakaTime:** ... | **Бюджет закрыт:** ~27h | **Мультипликатор:**...'
         # must NOT be skipped — they ARE the data.
         if re.search(r'\|\s*День\s*\|', line):
             continue
-        if ('WakaTime' in line or 'Физ. время' in line) and 'Мультипликатор' in line and '**Бюджет закрыт' not in line:
+        if 'WakaTime' in line and 'Мультипликатор' in line and '**Бюджет закрыт' not in line:
             continue
         for pat in patterns:
             m = re.search(pat, line)
@@ -486,27 +559,20 @@ def parse_weekplan_budget_for_date(date_str, gov_dir):
                 content = f.read()
             if not section_re.search(content):
                 continue
-            # Разбить по ## Итоги ... и найти блок с нужным «Итоги»
-            lines = content.split('\\n')
+            # Разбить по <details> и найти блок с нужным «Итоги»
+            blocks = content.split('<details')
             section = None
-            start_idx = None
-            for i, ln in enumerate(lines):
-                if ln.startswith('## ') and section_re.search(ln):
-                    start_idx = i
+            for blk in blocks:
+                if section_re.search(blk):
+                    end = blk.find('</details>')
+                    section = blk[:end] if end >= 0 else blk
                     break
-            if start_idx is not None:
-                end_idx = len(lines)
-                for i in range(start_idx + 1, len(lines)):
-                    if lines[i].startswith('## '):
-                        end_idx = i
-                        break
-                section = '\\n'.join(lines[start_idx:end_idx])
             if section is None:
                 continue
             for line in section.split('\\n'):
                 if 'Бюджет закрыт' not in line:
                     continue
-                if ('WakaTime' in line or 'Физ. время' in line) and 'Мультипликатор' in line:
+                if 'WakaTime' in line and 'Мультипликатор' in line:
                     continue
                 for pp in (r'закрыт[^|]*?\|\s*~?\s*(\d+(?:\.\d+)?)\s*h',
                            r'Бюджет\s+закрыт[:\*\s]+~?\s*(\d+(?:\.\d+)?)\s*h'):
@@ -822,6 +888,8 @@ plugin_know_arr=$(printf '%s\n' "${PLUGIN_KNOW_JSONS[@]:-}" | python3 -c "import
 # Merge & Write
 # ============================================================
 
+log "Collecting WakaTime..."
+WAKA_JSON=$(collect_wakatime)
 log "Collecting git stats..."
 GIT_JSON=$(collect_git)
 log "Collecting Claude sessions..."
@@ -845,6 +913,7 @@ SCHED_JSON=$(collect_scheduler_reports)
 MERGED=$(python3 -c "
 import json, sys
 
+waka = json.loads('''$WAKA_JSON''')
 git = json.loads('''$GIT_JSON''')
 sessions = json.loads('''$SESSIONS_JSON''')
 wp = json.loads('''$WP_JSON''')
@@ -865,6 +934,24 @@ iwe = {**git, **sessions, **wp, **health, **mult, **registry, **sched}
 for p in p_iwe:
     iwe.update(p)
 
+# WakaTime raw fields — всегда добавлять если есть (WP-299 Ф4)
+for k in ('coding_seconds_today', 'coding_seconds_7d', 'coding_seconds_30d', 'coding_active_days_30d'):
+    v = waka.get(k)
+    if v is not None:
+        iwe[k] = v
+
+# Daily multiplier
+waka_today = waka.get('coding_seconds_today', 0)
+budget_today = mult.get('daily_budget_closed', 0)
+if waka_today > 0 and budget_today > 0:
+    iwe['daily_multiplier'] = round(budget_today / (waka_today / 3600), 2)
+
+# Weekly multiplier
+waka_7d = waka.get('coding_seconds_7d', 0)
+budget_week = mult.get('weekly_budget_closed', 0)
+if waka_7d > 0 and budget_week > 0:
+    iwe['weekly_multiplier'] = round(budget_week / (waka_7d / 3600), 2)
+
 # 2_8_ecosystem: plugins only (QA, publications, etc.)
 ecosystem = {}
 for p in p_eco:
@@ -877,6 +964,7 @@ for p in p_know:
 
 # ADR-009 (WP-109 Ф3): 2_6_coding теперь агрегируется из user_events
 # через dt_sync (бот). dt-collect больше не пишет 2_6_coding в digital_twins.
+# WakaTime данные остаются в iwe для расчёта multiplier.
 result = {
     '2_7_iwe': iwe,
 }

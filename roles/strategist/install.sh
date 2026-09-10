@@ -74,7 +74,14 @@ if ! command -v launchctl >/dev/null 2>&1; then
         if ! iwe_systemd_user_bus_ok; then
             echo "  ⚠ systemd --user недоступен (нет пользовательской сессионной шины — типично для WSL2/контейнера/сервера без активного логина)"
             echo "  Installing $ROLE_NAME via cron fallback (issue #454)..."
-            mapfile -t cron_lines < <(
+            # WP-529 Ф9 (Evgenii 20.08): mapfile is bash4-only — this branch is
+            # exactly the one macOS (stock /bin/bash 3.2, no systemd) takes,
+            # so the previous line silently crashed the cron-fallback install
+            # on the platform it exists to serve.
+            cron_lines=()
+            while IFS= read -r cron_line; do
+                cron_lines+=("$cron_line")
+            done < <(
                 iwe_timer_to_cron_lines "$SYSTEMD_SRC/iwe-strategist-morning.timer" \
                     "$(iwe_cron_env_prefix) $SCRIPT_TARGET morning >> $HOME/logs/strategist/cron-morning.log 2>&1"
                 iwe_timer_to_cron_lines "$SYSTEMD_SRC/iwe-strategist-weekreview.timer" \
@@ -135,6 +142,16 @@ for label in com.strategist.morning com.strategist.weekreview; do
         continue
     fi
     launchctl unload "$TARGET_DIR/$label.plist" 2>/dev/null || true
+    # issue #725: безусловный cp стирал ручную правку пользователя (например,
+    # ограничение Weekday) без предупреждения и бэкапа при каждом update.sh —
+    # backup+warn выбран вместо skip-if-diverged (пир-сессия с Codex,
+    # 2026-09-09): skip навсегда заморозил бы апстрим-фиксы плиста для тех,
+    # кто его один раз отредактировал по несвязанной причине.
+    if [ -f "$TARGET_DIR/$label.plist" ] && ! cmp -s "$TARGET_DIR/$label.plist" "$LAUNCHD_DIR/$label.plist"; then
+        BACKUP="$TARGET_DIR/$label.plist.bak-$(date +%Y%m%dT%H%M%S)"
+        cp "$TARGET_DIR/$label.plist" "$BACKUP"
+        echo "  ⚠ $label.plist отличается от шаблона — старая версия сохранена в $(basename "$BACKUP") перед перезаписью"
+    fi
     cp "$LAUNCHD_DIR/$label.plist" "$TARGET_DIR/"
     if [ -z "${SETUP_CI:-}" ]; then
         launchctl load "$TARGET_DIR/$label.plist"

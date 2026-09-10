@@ -27,7 +27,14 @@ set -uo pipefail
 # Load unified environment: WORKSPACE_DIR, IWE_ROOT, IWE_SCRIPTS, etc.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_SCRIPTS_DIR="$SCRIPT_DIR"
-source "$TEMPLATE_SCRIPTS_DIR/lib/common.sh"
+# issue #455: a stale promoted copy without lib/ next to it used to degrade
+# silently (set -uo pipefail, no -e) — every path resolved to root, and the
+# scheduler-state check quietly took the wrong branch for three weeks before
+# anyone noticed. Missing the library is fatal now, not a silent no-op.
+source "$TEMPLATE_SCRIPTS_DIR/lib/common.sh" || {
+    echo "FATAL: lib/common.sh not found next to $0 — промотированная копия устарела, обновите её вместе с шаблоном" >&2
+    exit 1
+}
 # issue #329: old fallback assumed $SCRIPT_DIR/.. is always the workspace root —
 # false for a promoted copy at <governance-repo>/scripts/, which doubled the repo
 # name into every path. iwe_resolve_root() uses env-var precedence instead of
@@ -43,7 +50,7 @@ if [ -f "$PARAMS_FILE" ] && grep -qE '^multiplier_enabled:[[:space:]]*false([[:s
   MULTIPLIER_ENABLED="false"
 fi
 if [ "$MULTIPLIER_ENABLED" = "false" ]; then
-  BUDGET_FORMAT_HINT='<!-- PENDING: budget — посчитать после плана; multiplier_enabled: false → только «~Yh РП всего», без физического времени/мультипликатора. -->'
+  BUDGET_FORMAT_HINT='<!-- PENDING: budget — посчитать после плана; multiplier_enabled: false → только «~Yh РП всего», без физического времени/WakaTime/мультипликатора. -->'
 else
   BUDGET_FORMAT_HINT='<!-- PENDING: budget — посчитать после плана, формат см. templates-dayplan.md (бюджет РП всего / физ / мультипликатор). -->'
 fi
@@ -106,11 +113,29 @@ YDAY_MONTH_RU="${MONTH_NAMES[$YDAY_MNUM]}"
 # fields and cannot occur in a meaningful config value.
 _YAML_KEYS=()
 _YAML_VALS=()
-if [ -f "$CONFIG" ] && command -v python3 >/dev/null 2>&1; then
+# Cold review 2026-08-19 (Codex, Critical): under `set -u`, referencing
+# _RESOLVED_PYTHON3 below when $CONFIG is absent (the "no config" branch never
+# runs, so the variable is never assigned) crashed the whole script instead of
+# the intended silent-empty-arrays fallback. Initialized unconditionally here,
+# before the config check, so it's always defined either way.
+_RESOLVED_PYTHON3=""
+if [ -f "$CONFIG" ]; then
+  # WP-529 (continuation, 19.08): the F6 shared resolver (scripts/lib/find-python3.sh)
+  # is invoked here, inside the existing [ -f "$CONFIG" ] guard, not at script
+  # top-level — this branch is already conditional on the config existing, and a
+  # top-level resolve would run PyYAML detection even for invocations that never
+  # reach a yaml-dependent path (peer-session 2026-08-19-29, codex turn 1: lazy
+  # placement, not unconditional). No bare-python3 fallback on resolver failure:
+  # the resolver's own first candidate IS bare `python3` from PATH — if it
+  # still failed, PATH's python3 already lacks yaml too, so falling back to it
+  # would just reproduce the exact defect this migration fixes.
+  _RESOLVED_PYTHON3=$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/find-python3.sh" 2>/dev/null) || _RESOLVED_PYTHON3=""
+fi
+if [ -n "$_RESOLVED_PYTHON3" ]; then
   while IFS=$'\x1f' read -r k v; do
     _YAML_KEYS+=("$k")
     _YAML_VALS+=("$v")
-  done < <(python3 -c "
+  done < <("$_RESOLVED_PYTHON3" -c "
 import yaml, sys
 
 def flatten(d, prefix=''):
@@ -160,7 +185,14 @@ fi
 # --- Deterministic context extractors (WP-7 DAP: strategy + day-close) ---
 extract_day_close_carry_over() {
   local yday="$1"
-  local sessions_dir="$IWE/${IWE_GOVERNANCE_REPO:-DS-strategy}/sessions"
+  # issue #545: корень журналов — тем же контрактом, что писатель
+  # (session-guard.sh): MC-sessions после миграции, legacy иначе. Явный
+  # IWE_SESSIONS_ROOT, если сломан, — видимый WARN, не молчаливый промах.
+  local sessions_dir
+  if ! sessions_dir=$(iwe_sessions_dir); then
+    echo "WARN: IWE_SESSIONS_ROOT=${IWE_SESSIONS_ROOT:-} недоступен — читаю legacy-путь $(iwe_resolve_governance_repo "${GOVERNANCE_REPO:-}")/sessions" >&2
+    sessions_dir="$IWE/$(iwe_resolve_governance_repo "${GOVERNANCE_REPO:-}")/sessions"
+  fi
   local month="${yday:0:7}"
   local carry_over=""
 
@@ -169,6 +201,11 @@ extract_day_close_carry_over() {
   dc_report=$(find "$sessions_dir/$month" -maxdepth 2 -type f -name "report.md" 2>/dev/null | grep -F "${yday}-" | grep -F "day-close" | head -1)
   if [ -z "$dc_report" ]; then
     dc_report=$(find "$sessions_dir/$month" -maxdepth 1 -type f -name "${yday}-day-close.md" 2>/dev/null | head -1)
+  fi
+  if [ -z "$dc_report" ]; then
+    # Плоская раскладка (журналы прямо в корне, без подпапки по месяцу) —
+    # запасной путь для установок, где писатель ещё писал плоско (issue #545).
+    dc_report=$(find "$sessions_dir" -maxdepth 1 -type f -name "${yday}*day-close*" 2>/dev/null | head -1)
   fi
   if [ -n "$dc_report" ] && [ -f "$dc_report" ]; then
     carry_over=$(awk '
@@ -203,7 +240,14 @@ extract_day_close_carry_over() {
 
 extract_strategy_context() {
   local week_num="$1"
-  local sessions_dir="$IWE/${IWE_GOVERNANCE_REPO:-DS-strategy}/sessions"
+  # issue #545: корень журналов — тем же контрактом, что писатель
+  # (session-guard.sh): MC-sessions после миграции, legacy иначе. Явный
+  # IWE_SESSIONS_ROOT, если сломан, — видимый WARN, не молчаливый промах.
+  local sessions_dir
+  if ! sessions_dir=$(iwe_sessions_dir); then
+    echo "WARN: IWE_SESSIONS_ROOT=${IWE_SESSIONS_ROOT:-} недоступен — читаю legacy-путь $(iwe_resolve_governance_repo "${GOVERNANCE_REPO:-}")/sessions" >&2
+    sessions_dir="$IWE/$(iwe_resolve_governance_repo "${GOVERNANCE_REPO:-}")/sessions"
+  fi
   local strategy_file=""
 
   # 1. Strategy session markdown. Search current AND previous month: the session for a
@@ -248,6 +292,43 @@ extract_strategy_context() {
   fi
 
   echo "не найден"
+}
+
+# issue #477: mandatory_daily_wps used to be a plain instruction line telling
+# the LLM to "apply" the config key — an LLM reading day-rhythm-config.yaml
+# can't distinguish a commented-out example from an active setting, so the
+# example in the shipped config (still commented out on a fresh install) was
+# read as if active. This extractor uses the same PyYAML resolver as
+# read_yaml() above (_RESOLVED_PYTHON3), so a commented key is invisible to
+# it exactly like every other read_yaml() call — nothing LLM-interpreted.
+# List-of-objects shape (wp+min_minutes / category+min_count) doesn't fit
+# read_yaml()'s flatten(), hence a dedicated extractor rather than reuse.
+extract_mandatory_daily_wps() {
+  if [ -z "$_RESOLVED_PYTHON3" ]; then
+    echo ""
+    return 0
+  fi
+  "$_RESOLVED_PYTHON3" -c "
+import yaml, sys
+try:
+    with open('$CONFIG') as f:
+        d = yaml.safe_load(f) or {}
+    items = d.get('mandatory_daily_wps') or []
+    for item in items:
+        if not isinstance(item, dict):
+            print(f'skip: not a dict: {item!r}', file=sys.stderr)
+            continue
+        if 'wp' in item:
+            print(f\"WP-{item['wp']} (min {item.get('min_minutes', '?')} мин)\")
+        elif 'category' in item:
+            print(f\"категория «{item['category']}» (min {item.get('min_count', '?')} шт.)\")
+        else:
+            print(f'skip: neither wp nor category key: {item!r}', file=sys.stderr)
+except Exception as e:
+    # Same explicit-sentinel principle as read_yaml() above (bug-2026-06-05 class):
+    # a parse failure must not look identical to "key legitimately absent".
+    print(f'extract_mandatory_daily_wps: config read failed: {e}', file=sys.stderr)
+"
 }
 
 read_morning_priorities() {
@@ -295,8 +376,13 @@ read_morning_priorities() {
 # Если сегодня strategy_day → не генерировать DayPlan (SKILL.md шаг 4).
 # Возвращает exit 2; extension обрабатывает этот код и выводит сообщение Claude.
 # DAY_OPEN_FORCE_STRATEGY_DAY=1 bypasses the guard without changing default behavior —
-# needed by week-open-day-section-patch.sh (WP-484 Ф3), which reuses this same
-# scaffold to build the "Открытие дня" section inside WeekPlan on strategy_day.
+# an extension point for a caller that wants this scaffold's output on a
+# strategy_day too (e.g. to build an "Открытие дня" section inside WeekPlan).
+# issue #595: an earlier version of this comment named a specific caller
+# script (week-open-day-section-patch.sh, WP-484 Ф3) that depends on
+# author-only infrastructure (a shared-checkout publish gateway, a private
+# LLM proxy) not delivered by this template — the caller itself is out of
+# scope here, this flag is the generic, delivered part of the extension point.
 STRATEGY_DAY_NAME=$(read_yaml "day_open.strategy_day" || true)
 case "${STRATEGY_DAY_NAME:-monday}" in
   monday)    STRATEGY_DOW=1 ;;
@@ -354,15 +440,20 @@ render_video() {
 # enabled (data from server-news.sh or PENDING-маркеры).
 render_world() {
   local enabled
-  echo "## Мир"
+  echo "<details>"
+  echo "<summary><b>Мир</b></summary>"
   echo ""
   if [ "$YAML_PARSE_OK" != "true" ]; then
     echo "> ⚠️ \`day-rhythm-config.yaml\` не распарсился ($YAML_PARSE_ERROR) — не удалось прочитать \`news.enabled\`. Нет данных, пока конфиг не починен."
+    echo ""
+    echo "</details>"
     return 0
   fi
   enabled=$(read_yaml "news.enabled")
   if [ "$enabled" != "True" ]; then
     echo "> \`news.enabled: false\` в \`day-rhythm-config.yaml\` — секция выключена. Нет данных."
+    echo ""
+    echo "</details>"
     return 0
   fi
   bash "$IWE/scripts/server-news.sh" "$CONFIG" 2>/dev/null || {
@@ -377,6 +468,8 @@ render_world() {
   }
   echo ""
   echo "**Вывод:** <!-- PENDING: news-lens — 2-4 предложения: какие из этих новостей релевантны активным РП (WP-350, WP-330, WP-351 и др.). Использовать контекст WeekPlan + WP-Registry. -->"
+  echo ""
+  echo "</details>"
 }
 
 # --- Section: Здоровье платформы (feedback-triage report) ---
@@ -757,7 +850,7 @@ auto_generated: true
 
 1. Проверить $unit_hint
 2. Переустановить роли: \`bash setup.sh\` (секция [5/6]) — либо вручную по \`roles/ROLE-CONTRACT.md\`
-3. Запустить руками: \`bash \${IWE_SCRIPTS:-$IWE/FMT-exocortex-template/scripts}/../roles/synchronizer/scripts/scheduler.sh --dry-run\` (legacy-скрипт, актуален только если ваша инсталляция ещё не мигрировала на per-role юниты)
+3. Проверить ручной запуск центрального диспетчера: \`bash \${IWE_SCRIPTS:-$IWE/FMT-exocortex-template/scripts}/../roles/synchronizer/scripts/scheduler.sh dispatch\`
 
 ## Auto-generation note
 
@@ -871,8 +964,8 @@ render_fleeting_notes() {
     printf '| нет заметок | — | — | ✅ |\n'
   else
     while IFS= read -r title; do
-      # Wiki-style link — Obsidian не резолвит markdown-ссылки на .md как заметки
-      printf '| [[fleeting-notes|«%s»]] | <!-- PENDING --> | <!-- PENDING --> | [ ] |\n' "$title"
+      # Link to file without anchor — bold text has no GitHub markdown anchor
+      printf '| [«%s»](../inbox/fleeting-notes.md) | <!-- PENDING --> | <!-- PENDING --> | [ ] |\n' "$title"
     done <<< "$new_notes"
   fi
 }
@@ -881,7 +974,8 @@ render_fleeting_notes() {
 render_gate_metrics() {
   local script="$TEMPLATE_SCRIPTS_DIR/gate-metrics.sh"
   local log="${HOME}/.iwe/gate-decisions.jsonl"
-  echo "### Gate-метрики"
+  echo "<details>"
+  echo "<summary><b>Gate-метрики</b></summary>"
   echo ""
   if [ ! -f "$script" ]; then
     echo "> ⚠️ Скрипт gate-metrics.sh не найден: \`$script\`"
@@ -891,6 +985,8 @@ render_gate_metrics() {
   else
     bash "$script" "$log" "$DATE" 2>/dev/null || echo "> ⚠️ gate-metrics.sh завершился с ошибкой"
   fi
+  echo ""
+  echo "</details>"
 }
 
 # --- Section: KE-очередь (отчёты на разбор) ---
@@ -1061,13 +1157,26 @@ render_yesterday() {
     grep "^| " "$day_report_file" | grep -v "^| РП\|^| Время\|^|---" | sed 's/^/- /'
   else
     # Fallback: сканировать sessions напрямую за вчера если DayReport отсутствует
-    local sessions_dir="$IWE/${IWE_GOVERNANCE_REPO:-DS-strategy}/sessions"
+    # issue #545: см. extract_day_close_carry_over — корень журналов по
+    # контракту писателя (MC-sessions / legacy), сломанный явный
+    # IWE_SESSIONS_ROOT — видимый WARN.
+    local sessions_dir
+    if ! sessions_dir=$(iwe_sessions_dir); then
+      echo "WARN: IWE_SESSIONS_ROOT=${IWE_SESSIONS_ROOT:-} недоступен — читаю legacy-путь $(iwe_resolve_governance_repo "${GOVERNANCE_REPO:-}")/sessions" >&2
+      sessions_dir="$IWE/$(iwe_resolve_governance_repo "${GOVERNANCE_REPO:-}")/sessions"
+    fi
     local found=0
+    # WP-529 (continuation, 19.08): resolved once here, not inside the loop —
+    # this whole branch only runs when DayReport is missing (rare fallback), and
+    # resolving once before iterating avoids re-running find-python3.sh's full
+    # candidate walk on every session_dir.
+    local _resolved_python3
+    _resolved_python3=$("$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/find-python3.sh" 2>/dev/null) || _resolved_python3=""
     for session_dir in "$sessions_dir/${YDAY:0:7}"/${YDAY}-*/; do
       [ -d "$session_dir" ] || continue
-      if [ -f "$session_dir/meta.yaml" ]; then
+      if [ -f "$session_dir/meta.yaml" ] && [ -n "$_resolved_python3" ]; then
         local wp_id
-        wp_id=$(python3 -c "import yaml; d=yaml.safe_load(open('$session_dir/meta.yaml')); print(d.get('task_id','') or '')" 2>/dev/null)
+        wp_id=$("$_resolved_python3" -c "import yaml; d=yaml.safe_load(open('$session_dir/meta.yaml')); print(d.get('task_id','') or '')" 2>/dev/null)
         if [ -n "$wp_id" ]; then
           echo "- $wp_id"
           found=1
@@ -1150,10 +1259,16 @@ render_compact_dashboard() {
 # The template's full collection has a status column but does not define an "черновик"
 # value, while the priority table is the explicit current-work list. "Где остановился"
 # is the pilot's own progress — we never fabricate it (see feedback_no_invented_personal_history).
+# Sets globals SELF_DEV_BLOCK (details-section body) and SELF_DEV_TABLE_THEME
+# (short table-row cell, issue #636) from the same source in one pass. A plain
+# `echo`-per-line function called via `SELF_DEV_BLOCK=$(render_self_dev)` would
+# run in a subshell, discarding any other global it tries to set — so this
+# builds SELF_DEV_BLOCK as a string instead of relying on captured stdout.
 render_self_dev() {
   local draft_list="$IWE/${IWE_GOVERNANCE_REPO:-DS-strategy}/drafts/draft-list.md"
   if [ ! -f "$draft_list" ]; then
-    echo "**Активный черновик:** нет данных (drafts/draft-list.md не найден)"
+    SELF_DEV_TABLE_THEME="тема не задана — обсудить с пилотом (drafts/draft-list.md не найден)"
+    SELF_DEV_BLOCK="**Активный черновик:** нет данных (drafts/draft-list.md не найден)"
     return
   fi
   # Take the first data row from the template-defined "Приоритетные" table.
@@ -1164,25 +1279,41 @@ render_self_dev() {
     in_priorities && /^\|/ {
       if ($0 ~ /^\|[[:space:]]*#/) next
       if ($0 ~ /^\|[[:space:]]*-+/) next
+      # Skip finished rows: the priority table is ordered by draft number, so
+      # old published entries sit on top; taking the first row regardless of
+      # status resurfaced a May publication as "active" (#560, regression of #417).
+      if ($0 ~ /✅|опубликован|published/) next
       print
       exit
     }' "$draft_list")
   if [ -z "$row" ]; then
-    echo "**Активный черновик:** нет приоритетных черновиков в draft-list.md"
+    SELF_DEV_TABLE_THEME="тема не задана — обсудить с пилотом (нет активных черновиков)"
+    SELF_DEV_BLOCK="**Активный черновик:** нет активных черновиков (приоритетные пусты или все завершены)"
     return
   fi
   local dnum path
   dnum=$(echo "$row" | grep -oE 'D-[0-9]+' | head -1)
   path=$(echo "$row" | grep -oE '\([^)]*D-[0-9][^)]*\.md\)' | head -1 | tr -d '()' | sed 's#^\./#drafts/#')
+  SELF_DEV_TABLE_THEME="$dnum"
+  local draft_line
   if [ -n "$path" ]; then
-    echo "**Активный черновик:** [$dnum]($path)"
+    draft_line="**Активный черновик:** [$dnum]($path)"
   else
-    echo "**Активный черновик:** $dnum (ссылка не распознана в draft-list.md)"
+    draft_line="**Активный черновик:** $dnum (ссылка не распознана в draft-list.md)"
   fi
-  echo "**Где остановился:** открой файл черновика — прогресс ведёт пилот."
-  echo "**Сегодня:** 60-90 мин на редактирование / структурирование."
+  SELF_DEV_BLOCK="$draft_line
+**Где остановился:** открой файл черновика — прогресс ведёт пилот.
+**Сегодня:** 60-90 мин на редактирование / структурирование."
 }
-SELF_DEV_BLOCK=$(render_self_dev)
+# issue #636: table-row theme (SELF_DEV_TABLE_THEME) is deterministic, same
+# source as the details block — a scaffold with no real draft used to leave a
+# bare [тема] placeholder that the LLM filled in on its own, and the invented
+# topic then carried over via Day Close carry-over for weeks
+# (feedback_no_invented_personal_history). Called directly, not via `$(...)`,
+# so both globals land in this shell rather than a discarded subshell.
+SELF_DEV_TABLE_THEME=""
+SELF_DEV_BLOCK=""
+render_self_dev
 
 # --- Pre-compute sweep list (single call, reused below) ---
 # SWEEP_WP_FULL: raw active-wp-sweep.sh output, kept only as input to SWEEP_WP_LIST below.
@@ -1199,6 +1330,7 @@ SWEEP_WP_LIST=$(echo "$SWEEP_WP_FULL" \
 DAY_CLOSE_CARRY_OVER=$(extract_day_close_carry_over "$YDAY" | sed 's/^/  /')
 STRATEGY_CONTEXT=$(extract_strategy_context "$WEEK_NUM" | sed 's/^/  /')
 MORNING_PRIORITIES=$(read_morning_priorities | sed 's/^/  /')
+MANDATORY_DAILY_WPS=$(extract_mandatory_daily_wps 2>/dev/null)
 
 # Captured once (not inlined via $(...) in the heredoc below) so render_attention()
 # can read the same rendered text later without re-running server-news.sh a second
@@ -1215,22 +1347,35 @@ week: W$WEEK_NUM
 status: active
 agent: Стратег
 generated_by: day-open-scaffold.sh (WP-264 Ф2)
+collectedness:
+  phase: <!-- CHOOSE: normal | overload | burnout | relapse (COL.M.003) -->
 ---
 
 # Day Plan: $DAY_NUM $MONTH_RU $YEAR ($DOW_RU)
 
+<!-- COL.M.003 (PACK-collectedness): день открыт — (1) стоп-момент перед чтением
+     плана: один вдох, «что сейчас на автопилоте?»; (2) выбрать phase выше;
+     (3) в течение дня стоп-моменты на якорях: открытие DayPlan, переход между РП. -->
+
 <!-- СРОЧНОЕ (ТВС=С): вывести ТОЛЬКО при 🔴 (упавший smoke / сломанная интеграция / EMERGENCY в priorities.yaml / заблокированный конвейер). В зелёный день — «нет срочного». -->
-## 🚨 Срочное
+<details>
+<summary><b>🚨 Срочное</b></summary>
 
 <!-- PENDING: urgent — если в «Здоровье платформы» есть 🔴 ИЛИ в priorities.yaml пометка EMERGENCY: таблица | Что | Система | Действие | ETA |. Иначе одна строка: «— нет срочного (зелёный день)». -->
 
-## Саморазвитие
+</details>
 
-- **Изучи персональное руководство:** личное руководство (репозиторий \`personal-guide\` на твоём GitHub — см. \`/connect-guide\`)
+<details>
+<summary><b>Саморазвитие</b></summary>
+
+- **Изучи персональное руководство:** личное руководство (репозиторий \`DS-personal-guide\`, либо \`personal-guide\` у ранних немигрированных пользователей — см. \`/connect-guide\`)
 
 $SELF_DEV_BLOCK
 
-## Plan for today
+</details>
+
+<details open>
+<summary><b>Plan for today</b></summary>
 
 <!-- PENDING: today_plan — синтез таблицы плана дня.
 
@@ -1241,7 +1386,7 @@ $SELF_DEV_BLOCK
 ЗАПРЕЩЕНО: включать в план РП, закрытые вчера (есть в «закрыто вчера» + ✅ в REGISTRY). Например, WP-362 закрыт — его нет в плане.
 
 После priorities.yaml — дополнить из carry-over и SWEEP_WP_LIST теми РП, которых нет в priorities.yaml и которые ещё open.
-Применить mandatory_daily_wps + daily_checkpoint_wps из day-rhythm-config.yaml.
+Каждый РП из «Обязательные ежедневные РП» ниже (если секция не пуста) ОБЯЗАН быть в таблице — источник уже разрешён детерминированно, не текстом конфига.
 KE-строка: bash $TEMPLATE_SCRIPTS_DIR/ke-queue-stats.sh --dayplan-row (реальный бюджет, не литерал «1h»).
 Active WPs to include (из sweep + WeekPlan union): $SWEEP_WP_LIST
 -->
@@ -1252,9 +1397,12 @@ ${MORNING_PRIORITIES:-  (не задано — обнови current/priorities.y
 **Стратегические приоритеты (из Strategy Session W${WEEK_NUM}):**
 ${STRATEGY_CONTEXT:-не найдены}
 
+**Обязательные ежедневные РП (mandatory_daily_wps):**
+${MANDATORY_DAILY_WPS:-  (не задано — day-rhythm-config.yaml не содержит активного ключа mandatory_daily_wps)}
+
 | 🚦 | ТВС | # | РП | h | Статус |
 |----|-----|---|-----|---|--------|
-| ⚫ | В | N | **Саморазвитие** — [тема] | 1-2 | pending |
+| ⚫ | В | N | **Саморазвитие** — $SELF_DEV_TABLE_THEME | 1-2 | pending |
 | 🔴 | С | NNN | **<!-- PENDING -->** | X | pending |
 
 > ТВС: **В** = Важное (развитие / критичное для R1-R6) · **Т** = Текущее (плановая работа) · **С** = Срочное (угроза конвейеру, дублируется в шапке 🚨)
@@ -1266,7 +1414,10 @@ ${STRATEGY_CONTEXT:-не найдены}
 **Carry-over из Day Close вчера ($YDAY):**
 ${DAY_CLOSE_CARRY_OVER:-нет (Day Close не найден)}
 
-## Разбор заметок
+</details>
+
+<details>
+<summary><b>Разбор заметок</b></summary>
 
 <!-- Источник: inbox/fleeting-notes.md. Строки **Title** = непрочитанные. Ссылки без якоря — bold не создаёт GitHub-якорей. -->
 
@@ -1274,13 +1425,18 @@ ${DAY_CLOSE_CARRY_OVER:-нет (Day Close не найден)}
 |---------|-----|-------------|---|
 $(render_fleeting_notes)
 
-## Календарь ($DAY_NUM $MONTH_RU)
+</details>
 
-<!-- PENDING: calendar — сначала вызвать mcp__ext-google-calendar__list-calendars,
-  чтобы получить собственные calendar_ids пилота (свои календари + подключённые
-  общие), затем mcp__ext-google-calendar__list-events для каждого найденного ID
-  с timeMin=$DATE 00:00 МСК, timeMax=$DATE 23:59 МСК.
+<details>
+<summary><b>Календарь ($DAY_NUM $MONTH_RU)</b></summary>
+
+<!-- PENDING: calendar — единый источник: календарный коннектор (MCP-инструменты
+  календаря; имена зависят от установки, имя содержит «calendar» без учёта регистра, напр. mcp__claude_ai_Google_Calendar__* — фактические имена
+  взять из списка инструментов текущей сессии). Получить список календарей пилота
+  (свои + подключённые общие), затем события каждого за $DATE (00:00–23:59 МСК).
   Показать ВСЕ события дня по всем найденным календарям.
+  Если коннектора нет — фоллбэк: bash \$IWE_SCRIPTS/server-calendar.sh $DATE
+  (его «credentials не настроены» — факт о скрипте, не о календаре; issue #581).
   Формат: таблица + строка свободных блоков ≥1h. -->
 
 | Время (МСК) | Событие | Длит. | Связь с РП |
@@ -1289,7 +1445,10 @@ $(render_fleeting_notes)
 
 ⏱ Свободных блоков ≥1h: <!-- PENDING -->
 
-## Здоровье платформы (QA)
+</details>
+
+<details>
+<summary><b>Здоровье платформы (QA)</b></summary>
 
 $(render_bot_qa)
 
@@ -1305,23 +1464,38 @@ $(render_repo_issues)
 
 $(render_repo_activity)
 
-## Наработки агентов
+</details>
 
-### Ночные отчёты
+<details>
+<summary><b>Наработки агентов</b></summary>
+
+<details>
+<summary><b>Ночные отчёты</b></summary>
 
 $(render_scout)
 
-### 📚 KE-кандидаты (Knowledge Extraction)
+</details>
+
+<details>
+<summary><b>📚 KE-кандидаты (Knowledge Extraction)</b></summary>
 
 $(render_ke_candidates)
 
+</details>
+
 $(render_gate_metrics)
 
-### Авторская очистка базы знаний
+<details>
+<summary><b>Авторская очистка базы знаний</b></summary>
 
 $(render_content_cleanup)
 
-## Контент-план
+</details>
+
+</details>
+
+<details>
+<summary><b>Контент-план</b></summary>
 
 **Стратегия:** <!-- PENDING: 1 строка из Strategy.md (пример: club → Telegram → Дзен/Habr, N постов/нед) -->
 **TTL просрочены:** <!-- PENDING: D-NNN (истёк YYYY-MM-DD), ... или «нет просроченных» -->
@@ -1329,9 +1503,12 @@ $(render_content_cleanup)
 
 <!-- PENDING: content — таблица 1-3 тем из плана публикаций W{N}. Источник: WeekPlan или Strategy.md. -->
 
+</details>
+
 $WORLD_SECTION
 
-## Контекст недели (W$WEEK_NUM)
+<details>
+<summary><b>Контекст недели (W$WEEK_NUM)</b></summary>
 
 <!-- PENDING: bottleneck-week — запустить /bottleneck-pick --target weekplan --layer intra --horizon week --depth 1 и вставить 4-6 строк ПЕРВОЙ подсекцией: SC-failing, Bottleneck, Class (Policy/Resource/Cognitive), Этап 1, Сигнал. Source: extensions/day-open.after.md:158-191 -->
 
@@ -1339,21 +1516,35 @@ $WORLD_SECTION
 
 <!-- PENDING: week_context — фокус недели + текущий бюджет/мультипликатор + ТОС. Источник: ${IWE_GOVERNANCE_REPO:-DS-strategy}/current/WeekPlan W$WEEK_NUM*.md. -->
 
-## Итоги вчера ($YDAY_NUM $YDAY_MONTH_RU)
+</details>
+
+<details>
+<summary><b>Итоги вчера ($YDAY_NUM $YDAY_MONTH_RU)</b></summary>
 
 $(render_yesterday)
 
-## Помидорки/ритм
+</details>
+
+<details>
+<summary><b>Помидорки/ритм</b></summary>
 
 $(render_pomodoro)
 
-## Видео
+</details>
+
+<details>
+<summary><b>Видео</b></summary>
 
 $(render_video)
 
-## Требует внимания
+</details>
+
+<details>
+<summary><b>Требует внимания</b></summary>
 
 $(render_attention)
+
+</details>
 
 *Создан: $DATE (Day Open / day-open-scaffold.sh WP-264 Ф2)*
 EOF

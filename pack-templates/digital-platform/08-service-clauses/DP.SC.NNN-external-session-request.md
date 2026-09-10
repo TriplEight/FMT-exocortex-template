@@ -55,7 +55,7 @@ wp: WP-358
 - Acknowledgment в Telegram ≤10с (подтверждение, что ход принят)
 - Ответ Claude Code — в том же Telegram-чате, с сохранением контекста предыдущих ходов
 - Поддержка capability-запросов: `→ Календарь`, `→ РП`, `→ IWE-знания` (см. §Capability scope)
-- Трекинг активности: все ходы пишутся как domain events (activity_log)
+- Трекинг активности: все ходы пишутся как domain events (WakaTime + activity_log)
 - Audit trail — SESSION-thread в git (если не `--private`)
 - Graceful failure — явное сообщение если среда недоступна
 

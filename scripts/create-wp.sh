@@ -7,10 +7,15 @@
 # see DP.M.010, DP.ROLE.037
 #
 # Использование:
-#   bash create-wp.sh --title "Название" --budget 5h --priority P3 [--slug slug] [--repo "репо"] [--related "WP-150:dependency,WP-167:продукт"]
-#   bash create-wp.sh --title "Название" --budget 5h --priority P3 --state "belonging (Оснащённость): из → в" --hypothesis "H-101 | —:infra|techdebt|order|spinoff" [--hypothesis-relation tests]
-#   bash create-wp.sh --title "Название" --budget 5h --priority P3 --no-consent-check
+#   bash create-wp.sh --title "Название" --budget 5h --priority P3 --verification-class closed-loop [--slug slug] [--repo "репо"] [--related "WP-150:dependency,WP-167:продукт"]
+#   bash create-wp.sh --title "Название" --budget 5h --priority P3 --verification-class open-loop --state "belonging (Оснащённость): из → в" --hypothesis "H-101 | —:infra|techdebt|order|spinoff" [--hypothesis-relation tests]
+#   bash create-wp.sh --title "Название" --budget 5h --priority P3 --verification-class trivial --no-consent-check
 #
+# --verification-class (WP structural-hole fix): REQUIRED, always — trivial|closed-loop|open-loop|problem-framing.
+#   Determines whether the WP needs a staged plan (/decompose): open-loop/problem-framing
+#   with budget ≥3h get an extra checklist item in the generated context file's «Осталось»
+#   section reminding the pilot to run /decompose. Unlike --state/--hypothesis this gate is
+#   NOT conditional on a governance-repo file existing — every WP declares its class.
 # --state (WP-505): target state transition (WP-457 State-Transition Gate).
 #   REQUIRED when <governance>/docs/state-axes-registry.yaml exists (author install);
 #   optional otherwise (typical user install — gate inactive per template contract).
@@ -22,7 +27,7 @@
 # older callers while making the missing strategic basis visible in frontmatter.
 #
 # Предусловие: consent state file должен существовать:
-#   touch ${IWE:-$HOME/IWE}/.claude/state/wp-consent-{N}
+#   touch ${IWE_ROOT:-$HOME/IWE}/.claude/state/wp-consent-{N}
 #
 # Совместимость: bash 3.2+ (macOS), bash 4+ (Linux)
 
@@ -51,6 +56,7 @@ SLUG=""
 REPO=""
 RELATED=""
 RESULT=""
+VERIFICATION_CLASS=""
 STATE=""
 HYPOTHESIS=""
 HYPOTHESIS_RELATION="unclassified"
@@ -65,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     --repo)     REPO="$2";     shift 2 ;;
     --related)  RELATED="$2";  shift 2 ;;
     --result)   RESULT="$2";   shift 2 ;;
+    --verification-class) VERIFICATION_CLASS="$2"; shift 2 ;;
     --state)    STATE="$2";    shift 2 ;;
     --hypothesis) HYPOTHESIS="$2"; shift 2 ;;
     --hypothesis-relation) HYPOTHESIS_RELATION="$2"; shift 2 ;;
@@ -75,9 +82,22 @@ done
 
 # --- Валидация ---
 if [[ -z "$TITLE" || -z "$BUDGET" ]]; then
-  echo "Использование: $0 --title \"Название\" --budget 5h [--priority P3] [--slug slug] [--repo репо] [--related \"WP-NNN:тип\"] [--result R3] [--state \"ось: из → в\"] [--hypothesis H-NNN] [--hypothesis-relation tests]" >&2
+  echo "Использование: $0 --title \"Название\" --budget 5h --verification-class <trivial|closed-loop|open-loop|problem-framing> [--priority P3] [--slug slug] [--repo репо] [--related \"WP-NNN:тип\"] [--result R3] [--state \"ось: из → в\"] [--hypothesis H-NNN] [--hypothesis-relation tests]" >&2
   exit 1
 fi
+
+# --- Verification-Class Gate (structural-hole fix) ---
+# Unlike --state/--hypothesis, this is unconditionally required: every WP
+# declares its verification class regardless of which governance-repo files
+# exist. The class feeds the decompose-reminder checklist item below.
+case "$VERIFICATION_CLASS" in
+  trivial|closed-loop|open-loop|problem-framing) ;;
+  *)
+    echo "❌ --verification-class обязателен: trivial|closed-loop|open-loop|problem-framing" >&2
+    echo "   Передано: ${VERIFICATION_CLASS:-<пусто>}" >&2
+    exit 1
+    ;;
+esac
 
 case "$HYPOTHESIS_RELATION" in
   tests|enables|responds)
@@ -176,6 +196,33 @@ if [[ -f "$HYP_LOG" ]]; then
   esac
 fi
 
+# --- Decompose-reminder derivation (structural-hole fix) ---
+# Budget formats seen in the wild: "5h", "2h", "3-4h" (range). For a range we
+# want the upper bound — the more conservative read when deciding whether the
+# WP is big enough to need a staged plan. Plain `sed 's/[^0-9]//g'` (used
+# elsewhere in this script for a different, looser purpose) would mangle
+# "3-4h" into "34"; this instead takes the max of all digit groups found.
+budget_upper_bound_hours() {
+  local budget="$1" n max=0
+  for n in $(grep -oE '[0-9]+' <<<"$budget"); do
+    [[ "$n" -gt "$max" ]] && max="$n"
+  done
+  printf '%s\n' "$max"
+}
+
+# Шаг 4.5 protocol-open.md (/decompose): open-loop/problem-framing + budget
+# ≥3h needs a staged plan. create-wp.sh is deterministic=true and cannot call
+# the (non-deterministic) /decompose skill itself — instead it plants a
+# checklist reminder directly in the generated «Осталось» section, so the
+# nudge survives even when the console output scrolls away.
+DECOMPOSE_CHECKLIST_ITEM=""
+if [[ "$VERIFICATION_CLASS" == "open-loop" || "$VERIFICATION_CLASS" == "problem-framing" ]]; then
+  if [[ "$(budget_upper_bound_hours "$BUDGET")" -ge 3 ]]; then
+    DECOMPOSE_CHECKLIST_ITEM="- [ ] Запустить /decompose — план по этапам (класс проверки требует)
+"
+  fi
+fi
+
 # Registry cell «Ставка»: Russian axis names + hypothesis id (WP-505).
 axis_ru() {
   case "$1" in
@@ -200,8 +247,24 @@ if [[ -n "$STATE" && -n "${STATE_AXES:-}" ]]; then
   fi
 fi
 
-# --- Найти следующий номер WP ---
-WP_NUM=$(python3 - "$REGISTRY" <<'PYEOF' 2>/dev/null
+# --- Найти и атомарно зарезервировать следующий номер WP ---
+# issue #743: max(REGISTRY)+1 без резервирования отдаёт один и тот же номер
+# двум параллельным агентам (Claude/Kimi/Codex — штатный режим платформы,
+# см. AGENTS.md § Git Staging), и повторно — любому сокращению активного
+# реестра (архивация, разделение). Тот же класс гонки уже закрыт для номеров
+# пир-сессий (session-dir-reserve.sh, WP-530): маркер-каталог + `mkdir` без
+# -p как единственный атомарный арбитр на POSIX-файловой системе, retry на
+# EEXIST. Маркеры никогда не удаляются при архивации WP — номер не переиздаётся.
+WP_NUMBERS_DIR="$STATE_DIR/wp-numbers"
+mkdir -p "$WP_NUMBERS_DIR"
+# Fail fast on a real filesystem problem (permissions, read-only, disk full)
+# instead of burning all 50 retry attempts and reporting a misleading
+# "couldn't reserve after 50 tries" — that message is meant for a genuine
+# reservation race, not a broken filesystem (cold-review finding, PR #746).
+[[ -w "$WP_NUMBERS_DIR" ]] || { echo "❌ Нет прав на запись в $WP_NUMBERS_DIR — резервирование номера невозможно" >&2; exit 1; }
+
+registry_max() {
+  python3 - "$REGISTRY" <<'PYEOF' 2>/dev/null
 import sys, re
 registry = sys.argv[1]
 max_num = 0
@@ -214,18 +277,43 @@ try:
                 n = int(m.group(1))
                 if n > max_num:
                     max_num = n
-except Exception as e:
-    print(0, file=sys.stderr)
-print(max_num + 1)
+except Exception:
+    pass
+print(max_num)
 PYEOF
-)
+}
 
-if [[ -z "$WP_NUM" || "$WP_NUM" -le 0 ]]; then
-  echo "❌ Не удалось определить следующий номер WP из REGISTRY" >&2
+highest_taken() {
+  local max
+  max=$(registry_max)
+  [[ "$max" =~ ^[0-9]+$ ]] || max=0
+  local d n
+  for d in "$WP_NUMBERS_DIR"/*/; do
+    [[ -d "$d" ]] || continue
+    n="$(basename "$d")"
+    [[ "$n" =~ ^[0-9]+$ ]] || continue
+    if [ "$n" -gt "$max" ]; then max=$n; fi
+  done
+  printf '%s\n' "$max"
+}
+
+WP_NUM=""
+for ((_attempt = 1; _attempt <= 50; _attempt++)); do
+  next=$(( $(highest_taken) + 1 ))
+  # Без -p: EEXIST — сигнал, что номер выиграла другая сессия, повторить со
+  # свежим highest_taken (могла также вырасти сама REGISTRY-часть максимума).
+  if mkdir "$WP_NUMBERS_DIR/$next" 2>/dev/null; then
+    WP_NUM="$next"
+    break
+  fi
+done
+
+if [[ -z "$WP_NUM" ]]; then
+  echo "❌ Не удалось зарезервировать номер WP за 50 попыток" >&2
   exit 1
 fi
 
-echo "📋 Следующий номер WP: $WP_NUM"
+echo "📋 Следующий номер WP: $WP_NUM (зарезервирован: $WP_NUMBERS_DIR/$WP_NUM)"
 
 # issue #338 п.4: без паддинга "WP-9" в листинге сортируется после "WP-10".
 # WP_ID — только для строк с префиксом "WP-" (пути, заголовки); frontmatter
@@ -233,9 +321,18 @@ echo "📋 Следующий номер WP: $WP_NUM"
 WP_ID=$(printf '%03d' "$WP_NUM")
 
 # --- Проверка consent ---
+# Отказ здесь — штатный первый круг WP Gate (реальный пользователь ещё не
+# подтвердил создание), не гонка за номером: ничего для WP_NUM не создано,
+# поэтому маркер резервации снимаем перед выходом — иначе повторный запуск
+# после `touch` резервирует СЛЕДУЮЩИЙ номер, а не тот, что пользователь только
+# что подтвердил, и WP Gate никогда не проходит (живой тест поймал это до
+# релиза: touch consent-2 → второй запуск требует consent-3 → бесконечная
+# погоня). Отличие от "не удалось создать WP-N" ниже (rollback_wp_creation):
+# там уже могли быть частичные файловые следы, здесь — гарантированно нет.
 CONSENT_FILE="$STATE_DIR/wp-consent-${WP_NUM}"
 if [[ "$SKIP_CONSENT" -eq 0 ]]; then
   if [[ ! -f "$CONSENT_FILE" ]]; then
+    rmdir "$WP_NUMBERS_DIR/$WP_NUM" 2>/dev/null
     echo "🚫 WP Gate: нет согласия пользователя на создание WP-${WP_NUM}" >&2
     echo "   Создайте consent file и повторите:" >&2
     echo "   touch $CONSENT_FILE" >&2
@@ -356,6 +453,7 @@ budget: ${BUDGET}
 created: ${TODAY}
 last_session: ${TODAY}
 related: []
+verification_class: ${VERIFICATION_CLASS}
 ${FM_STAKE}
 activation: on-demand
 ---
@@ -392,7 +490,7 @@ ${RELATED_ROWS}
 **Что узнали:** —
   → memory: не нужно
 **Что дальше:**
-- [ ] Открыть сессию, прочитать задачу, составить план
+${DECOMPOSE_CHECKLIST_ITEM}- [ ] Открыть сессию, прочитать задачу, составить план
 **Следующий шаг:** Открыть сессию — прочитать задачу, составить план
 **Контекст для следующей сессии:** РП только создан, нет контекста
 WPEOF
@@ -544,9 +642,7 @@ weekplan_path, wp_num, title, priority, budget = sys.argv[1:6]
 # Маппинг приоритета → светофор
 flag_map = {"P1": "🔴", "P2": "🟡", "P3": "🟢", "P4": "⚪", "P5": "⚪"}
 flag = flag_map.get(priority, "⚪")
-# bug: stripping "." along with letters turned "0.5h" into "05" in the WeekPlan
-# "h" column. Keep digits, "-" (ranges like "2-3h") and "." (sub-hour budgets).
-h_val = re.sub(r"[^0-9\-.]", "", budget) or "?"
+h_val = re.sub(r"[^0-9\-]", "", budget) or "?"
 
 with open(weekplan_path, "r", encoding="utf-8") as f:
     lines = f.readlines()
@@ -601,13 +697,8 @@ fi
 # --- Шаг 4: Strategy.md (только если --result задан и бюджет ≥3h) ---
 echo "4/5 Strategy.md..."
 
-# bug: stripping "." (e.g. sed 's/[^0-9]//g') turned "0.5h" into "05", which bash's
-# `-ge` then parsed as octal 5 — a sub-hour budget wrongly counted as >=3h. Extract
-# the leading decimal number and compare with awk so fractional hours stay < 3.
-BUDGET_NUM=$(echo "$BUDGET" | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
-BUDGET_NUM="${BUDGET_NUM:-0}"
-budget_at_least_3h() { awk -v n="$BUDGET_NUM" 'BEGIN { exit !(n >= 3) }'; }
-if [[ -n "$RESULT" ]] && budget_at_least_3h; then
+BUDGET_H=$(echo "$BUDGET" | sed 's/[^0-9]//g')
+if [[ -n "$RESULT" && "${BUDGET_H:-0}" -ge 3 ]]; then
   STRATEGY_FILE="$STRATEGY/docs/Strategy.md"
   python3 - "$STRATEGY_FILE" "$WP_ID" "$REPO" "$RESULT" <<'PYEOF'
 import sys
@@ -638,7 +729,7 @@ with open(strategy_path, "w", encoding="utf-8") as f:
     f.write(content)
 print("   ✅ Strategy.md: WP-{} → {} добавлен".format(wp_id, result))
 PYEOF
-elif budget_at_least_3h; then
+elif [[ "${BUDGET_H:-0}" -ge 3 ]]; then
   echo "   ℹ️  РП ≥3h, но --result не задан — добавить маппинг в Strategy.md вручную"
 else
   echo "   ℹ️  РП <3h — маппинг в Strategy.md не требуется"

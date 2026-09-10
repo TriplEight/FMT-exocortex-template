@@ -38,7 +38,10 @@ table_to_list() {
     # weekplan (default): # | WP | Budget | Status | Deadline | Repo
     local format="${3:-weekplan}"
 
-    awk -v s="## ${section}" 'index($0,s)==1{f=1;next} f && /^## /{exit} f' "$file" \
+    awk -v s="## ${section}" -v t="${section}" \
+        'index($0,s)==1 || ($0 ~ /<summary>/ && index($0,t)) {f=1;next}
+         f && (/^## / || /<\/details>/) {exit}
+         f' "$file" \
         | grep '^|' \
         | tail -n +3 \
         | sed -E 's/\[\[[^][]*\\?\|([^][]*)\]\]/\1/g' \

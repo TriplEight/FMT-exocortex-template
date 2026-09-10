@@ -34,7 +34,7 @@
 | Файл контекста РП | WP Context File | DP.EXOCORTEX.001 | inbox/WP-*.md в DS-strategy |
 | Harness (упряжь) | Harness | DP.D.025 | IWE как harness для интеллектуальной работы |
 | ИИ-система | AI System | DP.ROLE.001 | Claude Code, бот — исполнители ролей |
-| ИТ-система | IT System | DP.SYS.001 | MCP-серверы — детерминированные компоненты |
+| ИТ-система | IT System | DP.SYS.001 | MCP-серверы, WakaTime — детерминированные компоненты |
 
 ---
 

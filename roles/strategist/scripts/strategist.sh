@@ -4,10 +4,47 @@
 
 set -e
 
-# Предотвращаем сон: -i (idle, работает на батарее) -d (display) -u (user activity)
-# Флаг -s (system sleep) не используем — он НЕ работает на батарее (OBC может переключить профиль)
-# Linux: caffeinate отсутствует — guard через command -v (на Linux достаточно, что cron/systemd сам управляет sleep)
-command -v caffeinate >/dev/null 2>&1 && caffeinate -diu -w $$ &
+# issue #657: this script needs more than one independent EXIT cleanup (kill
+# the sleep inhibitor below; remove acquire_lock()'s concurrency lock
+# directory further down) — plain `trap ... EXIT` only keeps the LAST
+# handler registered for a signal, so the second one silently replaced the
+# first on every ordinary run, not just on kill -9/orphaning as first
+# suspected. Register cleanups here instead of calling `trap` directly.
+_EXIT_CLEANUPS=()
+add_exit_cleanup() {
+    _EXIT_CLEANUPS+=("$1")
+}
+run_exit_cleanups() {
+    local cmd
+    for cmd in "${_EXIT_CLEANUPS[@]}"; do
+        eval "$cmd" 2>/dev/null || true
+    done
+}
+trap run_exit_cleanups EXIT
+
+# Sleep inhibitor for the WHOLE script lifetime (issue #553: direct launchd
+# units invoke this script bypassing scheduler.sh, so the inhibitor must live
+# here too — parity with roles/synchronizer/scripts/scheduler.sh).
+# macOS: caffeinate -diu (idle+display+user; works on battery; -s is NOT used —
+# it is ignored on battery power). `-w $$` ties the inhibitor to this shell
+# process, which stays alive for the entire scenario incl. the commit→push tail.
+# Known OS limit: lid-close on battery cannot be held by caffeinate at all
+# (-s works on AC only) — schedule night runs on AC or with the lid open.
+# Linux: systemd-inhibit when available; direct systemd timers do not inhibit
+# sleep by themselves. `timeout 4h` around `sleep infinity` is a second line
+# of defense on top of the EXIT trap above (issue #657): a parent killed with
+# SIGKILL or reaped by init before bash processes the trap leaves the trap
+# unrun no matter how it is composed — bash cannot catch SIGKILL. Bounding
+# the held process itself is the only thing that guarantees it cannot
+# outlive a single scenario run indefinitely.
+if [[ "$(uname)" == "Darwin" ]]; then
+    caffeinate -diu -w $$ &
+elif command -v systemd-inhibit &>/dev/null; then
+    systemd-inhibit --what=idle:sleep --who=strategist --why="agent scenario" --mode=block \
+        timeout 4h sleep infinity &
+    _INHIBIT_PID=$!
+    add_exit_cleanup 'kill $_INHIBIT_PID 2>/dev/null'
+fi
 
 # Конфигурация
 # WP-273 R5 fix (Round 5 Евгения): substituted runner живёт в .iwe-runtime/,
@@ -22,9 +59,34 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 WORKSPACE="${IWE_WORKSPACE:-$HOME/IWE}/${IWE_GOVERNANCE_REPO:-DS-strategy}"
 
 # Guard: IWE_GOVERNANCE_REPO mismatch (Claude peer-review, 2026-05-26)
-EXPECTED_GOV=$(grep 'IWE_GOVERNANCE_REPO=' "$HOME/.iwe-paths" 2>/dev/null | sed 's/.*="//;s/"$//' || echo "DS-strategy")
+# WP-529 Ф94 (peer-session 2026-09-08-32, Evgenii's report): $HOME/.iwe-paths
+# is a legacy path install-iwe-paths.sh stopped writing (canonical file is
+# $WORKSPACE_DIR/.iwe-paths, see WORKSPACE above). Read the current path, and
+# read it without a pipe: `grep|sed || echo` masked grep's exit code behind
+# sed's (sed exits 0 on empty stdin), so the "|| echo DS-strategy" fallback
+# never fired and EXPECTED_GOV silently ended up empty instead.
+IWE_PATHS_FILE="${IWE_WORKSPACE:-$HOME/IWE}/.iwe-paths"
+# `|| true` guards against awk's own exit code (e.g. file not found) tripping
+# `set -e` on this assignment — not a pipe, so no exit-code-masking risk;
+# the value fallback below is the actual default, this only keeps the script
+# alive to reach it.
+EXPECTED_GOV=$(awk -F'"' '/^export IWE_GOVERNANCE_REPO=/{print $2; exit}' "$IWE_PATHS_FILE" 2>/dev/null || true)
+EXPECTED_GOV="${EXPECTED_GOV:-DS-strategy}"
 if [ "${IWE_GOVERNANCE_REPO:-}" ] && [ "$IWE_GOVERNANCE_REPO" != "$EXPECTED_GOV" ]; then
-    echo "WARN: IWE_GOVERNANCE_REPO=$IWE_GOVERNANCE_REPO, expected $EXPECTED_GOV (from ~/.iwe-paths)" >&2
+    echo "WARN: IWE_GOVERNANCE_REPO=$IWE_GOVERNANCE_REPO, expected $EXPECTED_GOV (from $IWE_PATHS_FILE)" >&2
+fi
+
+# WP-529 F6 (Evgenii post-update defect #1, 18.08): update.sh reinstalls
+# auto-roles while .update-incomplete is still present (the transaction closes
+# at the very end), and launchctl load fires RunAtLoad right away — a mutating
+# agent run started mid-update at 22:38. Skip every scenario while an update
+# is open; the next scheduled run picks it up. Template root is resolved as
+# $IWE_TEMPLATE first, then ${IWE_WORKSPACE:-$HOME/IWE}/FMT-exocortex-template
+# (NOT identical to the PROMPTS_DIR fallback below, which hardcodes $HOME/IWE).
+UPDATE_MARKER="${IWE_TEMPLATE:-${IWE_WORKSPACE:-$HOME/IWE}/FMT-exocortex-template}/.update-incomplete"
+if [ -f "$UPDATE_MARKER" ]; then
+    echo "[$(date '+%H:%M:%S')] SKIP: template update in progress ($UPDATE_MARKER present) — no mutating run during update" >&2
+    exit 0
 fi
 
 # PROMPTS_DIR резолв: $IWE_TEMPLATE (Generated runtime) → $HOME/IWE/FMT-exocortex-template (default) → relative (legacy fallback)
@@ -86,24 +148,18 @@ mkdir -p "$LOG_DIR"
 # Определяем день недели и тип сценария
 DAY_OF_WEEK=$(date +%u)  # 1=Mon, 7=Sun
 DATE=$(date +%Y-%m-%d)
-WEEK=$(date +%V)
+# issue #616: "первый Пн месяца" — календарная арифметика, не факт даты;
+# LLM однажды вывела её из головы и ошиблась (последний Пн августа принят за
+# первый Пн сентября). Считаем детерминированно здесь и передаём как готовый
+# факт (тот же принцип, что DAY_OF_WEEK ниже) — модели больше не нужно её
+# выводить самой.
+IS_FIRST_MONDAY_OF_MONTH="нет"
+if [ "$DAY_OF_WEEK" = "1" ] && [ "$(date +%d)" -le 7 ]; then
+    IS_FIRST_MONDAY_OF_MONTH="да"
+fi
 
 # Лог файл
 LOG_FILE="$LOG_DIR/$DATE.log"
-
-# bug-2026-08-31: scheduler.sh пишет STATE_DIR-маркер (используется daily-report.sh
-# для ✅/❌) только когда САМ вызывает strategist.sh и получает rc=0. Если гонку
-# выигрывает независимо запущенный systemd-юнит (iwe-strategist-morning.service /
-# -weekreview.service), маркер никогда не пишется — отчёт показывает ❌ даже при
-# полном успехе. Стратег теперь пишет маркер сам, независимо от вызывателя.
-STATE_DIR="$HOME/.local/state/exocortex"
-mkdir -p "$STATE_DIR"
-mark_scheduler_done() {
-    echo "$(date '+%H:%M:%S')" > "$STATE_DIR/$1-$DATE"
-}
-mark_scheduler_done_week() {
-    echo "$DATE $(date '+%H:%M:%S')" > "$STATE_DIR/$1-W$WEEK"
-}
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
@@ -169,7 +225,7 @@ months = ['января','февраля','марта','апреля','мая','
 d = datetime.date.today()
 print(f'{d.day} {months[d.month-1]} {d.year}, {days[d.weekday()]}')
 ")
-    prompt="[Системный контекст] Сегодня: ${ru_date_context}. ISO: ${DATE}. День недели №${DAY_OF_WEEK} (1=Пн..7=Вс). ЯЗЫК: отвечай ТОЛЬКО на русском. Украинский, английский и другие языки запрещены.
+    prompt="[Системный контекст] Сегодня: ${ru_date_context}. ISO: ${DATE}. День недели №${DAY_OF_WEEK} (1=Пн..7=Вс). Первый Пн месяца: ${IS_FIRST_MONDAY_OF_MONTH} (посчитано командой date, не выводи это значение сам — issue #616). ЯЗЫК: отвечай ТОЛЬКО на русском. Украинский, английский и другие языки запрещены.
 
 ${prompt}"
 
@@ -188,9 +244,15 @@ ${prompt}"
     fi
     # NB: --dangerously-skip-permissions не используется — Claude Code блокирует флаг
     # под root/sudo (Linux cron). --allowedTools задаёт явный whitelist, чего достаточно.
+    # Календарный коннектор в whitelist (issue #581): без него morning-прогон не видит
+    # встречи дня ни при какой конфигурации. Имя сервера зависит от установки —
+    # переопределяется через IWE_CALENDAR_MCP_SERVERS (список через запятую);
+    # дефолт — проверенный mcp__claude_ai_Google_Calendar. Неизвестные имена в
+    # whitelist безвредны — просто никогда не совпадут.
+    local calendar_mcp="${IWE_CALENDAR_MCP_SERVERS:-mcp__claude_ai_Google_Calendar}"
     timeout "$CLAUDE_TIMEOUT" "$CLAUDE_PATH" \
         "${model_args[@]}" \
-        --allowedTools "Read,Write,Edit,Glob,Grep,Bash" \
+        --allowedTools "Read,Write,Edit,Glob,Grep,Bash,${calendar_mcp}" \
         -p "$prompt" \
         >> "$LOG_FILE" 2>&1 || rc=$?
 
@@ -253,30 +315,43 @@ acquire_lock() {
         fi
     fi
     echo $$ > "$lockdir/pid" || { rm -rf "$lockdir"; log "ERROR: failed to write PID for $scenario"; exit 1; }
-    trap "rm -rf \"$lockdir\" 2>/dev/null" EXIT
+    add_exit_cleanup "rm -rf \"$lockdir\" 2>/dev/null"
 }
 
-# Читаем strategy_day из конфига (L4 Personal) — кросс-платформенный резолв (WP-34)
-find_rhythm_config() {
-    local cand
-    for cand in \
-        "${IWE_WORKSPACE:-/nonexistent}/memory/day-rhythm-config.yaml" \
-        "$HOME/.claude/projects/-Users-$(whoami)-IWE/memory/day-rhythm-config.yaml" \
-        "$HOME/Documents/Obsidian_notes/IWE/memory/day-rhythm-config.yaml" \
-        "$HOME"/.claude/projects/*IWE/memory/day-rhythm-config.yaml
-    do
-        [ -f "$cand" ] && { echo "$cand"; return 0; }
-    done
-    return 1
+# Читаем strategy_day из конфига (L4 Personal)
+# issue #729: раньше единственным источником был auto-memory Claude Code по
+# литеральному пути "-Users-$(whoami)-IWE" — ломается молча, если workspace
+# не буквально ~/IWE (симлинк или другой путь на Linux/WSL), а fallback на
+# monday ничем не сигнализировал об ошибке. Governance-репо копия — тот же
+# источник, что уже читают day-open-scaffold.sh и server-calendar.sh, и она
+# не зависит от workspace-пути. Функция вынесена отдельно ради регрессионного
+# теста (scripts/tests/test_issue_729_rhythm_config_resolve.sh).
+resolve_rhythm_config() {
+    local ws="$1" iwe_workspace="$2"
+    local rhythm_config="$ws/exocortex/day-rhythm-config.yaml"
+    if [ ! -f "$rhythm_config" ]; then
+        # Fallback: auto-memory Claude Code, путь выводим из РЕАЛЬНОГО workspace
+        # (pwd -P разворачивает симлинки), не из literal "~/IWE".
+        local ws_real
+        ws_real="$(cd "${iwe_workspace:-$HOME/IWE}" 2>/dev/null && pwd -P || true)"
+        if [ -n "$ws_real" ]; then
+            # tr '/_.' '-', не sed 's#/#-#g': Claude Code слугифицирует путь,
+            # заменяя на "-" также "_" и "." (см. memory-exocortex-sync.sh) —
+            # sed-only вариант молча ломался бы для workspace-путей с "." или "_".
+            local ws_slug
+            ws_slug="$(printf '%s' "$ws_real" | tr '/_.' '-')"
+            rhythm_config="$HOME/.claude/projects/${ws_slug}/memory/day-rhythm-config.yaml"
+        fi
+    fi
+    printf '%s\n' "$rhythm_config"
 }
-if RHYTHM_CONFIG=$(find_rhythm_config); then
-    log "INFO: rhythm config: $RHYTHM_CONFIG"
-else
-    RHYTHM_CONFIG=""
-    log "WARN: day-rhythm-config.yaml not found, defaulting strategy_day=monday (see WP-34)"
-fi
+
+RHYTHM_CONFIG="$(resolve_rhythm_config "$WORKSPACE" "${IWE_WORKSPACE:-}")"
 STRATEGY_DAY_NAME=$(grep 'strategy_day:' "$RHYTHM_CONFIG" 2>/dev/null | awk '{print $2}')
-: "${STRATEGY_DAY_NAME:=monday}"
+if [ -z "$STRATEGY_DAY_NAME" ]; then
+    log "WARN: strategy_day not found in $RHYTHM_CONFIG — fallback: monday"
+    STRATEGY_DAY_NAME="monday"
+fi
 # Конвертируем имя дня в номер (1=Mon..7=Sun)
 case "$STRATEGY_DAY_NAME" in
     monday)    STRATEGY_DAY_NUM=1 ;;
@@ -316,19 +391,41 @@ case "$1" in
             # prompt is fallback ONLY — it ignores priorities.yaml and the scaffold, which
             # was the root cause of the 2026-06-21 structure/priority drift.
             log "Morning: running canonical Day Open pipeline"
-            DAY_OPEN_PIPELINE="$WORKSPACE/scripts/day-open-pipeline.sh"
-            if [ -f "$DAY_OPEN_PIPELINE" ] && bash "$DAY_OPEN_PIPELINE" >> "$LOG_FILE" 2>&1; then
+            # $IWE_SCRIPTS first (matches the interactive day-open skill's own
+            # resolution order), $WORKSPACE/scripts/ as legacy fallback for
+            # installs that still deliver a workspace-root copy. #598: this
+            # function used to read $WORKSPACE only, so $IWE_SCRIPTS-only
+            # installs fell back to free-form silently, every morning, with
+            # no escalation (found live: 37 consecutive days, 88 runs).
+            DAY_OPEN_PIPELINE="${IWE_SCRIPTS:-}/day-open-pipeline.sh"
+            if [ -z "${IWE_SCRIPTS:-}" ] || [ ! -f "$DAY_OPEN_PIPELINE" ]; then
+                DAY_OPEN_PIPELINE="$WORKSPACE/scripts/day-open-pipeline.sh"
+            fi
+            if [ ! -f "$DAY_OPEN_PIPELINE" ]; then
+                # WP-529 F6: on user installs workspace-root scripts/ is not
+                # delivered at all (Evgenii defects #2/#3, 18.08) — say so
+                # instead of a generic "unavailable/failed". The delivery
+                # graph itself is WP-529 F7 scope, no silent bridge here.
+                log "WARN: Day Open pipeline not found at \$IWE_SCRIPTS or $WORKSPACE/scripts — canonical pipeline is not delivered on this install (WP-529 F7); fallback to free-form day-plan prompt"
+                run_claude "day-plan" "claude-sonnet-4-6"
+                notify_telegram "day-plan"
+            elif bash "$DAY_OPEN_PIPELINE" >> "$LOG_FILE" 2>&1; then
                 log "Morning: Day Open pipeline OK (scaffold + llm-fill)"
             else
-                log "WARN: Day Open pipeline unavailable/failed — fallback to free-form day-plan prompt"
+                log "WARN: Day Open pipeline failed (see lines above in this log) — fallback to free-form day-plan prompt"
                 run_claude "day-plan" "claude-sonnet-4-6"
                 notify_telegram "day-plan"
             fi
         fi
-        # set -e гарантирует: если ветка выше не завершилась success, сюда не дойдём.
-        mark_scheduler_done "strategist-morning"
         ;;
     "evening")
+        # WP-529 F6: evening was the only scheduled scenario without the
+        # RunAtLoad/CalendarInterval race lock and the ran-today check.
+        acquire_lock "evening"
+        if already_ran_today "evening"; then
+            log "SKIP: evening already completed today"
+            exit 0
+        fi
         log "Evening: running evening review"
         run_claude "evening"
         notify_telegram "evening"
@@ -341,7 +438,6 @@ case "$1" in
         fi
         log "Sunday: running week review"
         run_claude "week-review" "claude-opus-4-7"
-        mark_scheduler_done_week "strategist-week-review"
         # Fallback push for Knowledge Index (week-review creates a post there)
         # KI_REPO may not exist for all users — guard with [ -d ]
         KI_REPO="$HOME/IWE/DS-Knowledge-Index"
@@ -353,13 +449,11 @@ case "$1" in
     "session-prep")
         log "Manual: running session prep"
         run_claude "session-prep" "claude-sonnet-4-6"
-        mark_scheduler_done "strategist-morning"
         notify_telegram "session-prep"
         ;;
     "day-plan")
         log "Manual: running day plan"
         run_claude "day-plan" "claude-sonnet-4-6"
-        mark_scheduler_done "strategist-morning"
         notify_telegram "day-plan"
         ;;
     "note-review")
@@ -389,8 +483,35 @@ case "$1" in
         ) || true
 
         # Deterministic cleanup: archive non-bold, non-🔄 notes (safety net for LLM Step 10)
+        # cleanup-processed-notes.py has no placeholders, so it is read-only
+        # data from FMT (same rule as notify.sh above) and build-runtime does
+        # not deliver it next to this runtime copy of strategist.sh — resolving
+        # it via $SCRIPT_DIR silently no-op'd every run (#597).
+        if [ -n "${IWE_TEMPLATE:-}" ] && [ -f "$IWE_TEMPLATE/roles/strategist/scripts/cleanup-processed-notes.py" ]; then
+            cleanup_script="$IWE_TEMPLATE/roles/strategist/scripts/cleanup-processed-notes.py"
+        elif [ -f "$HOME/IWE/FMT-exocortex-template/roles/strategist/scripts/cleanup-processed-notes.py" ]; then
+            cleanup_script="$HOME/IWE/FMT-exocortex-template/roles/strategist/scripts/cleanup-processed-notes.py"
+        else
+            cleanup_script="$SCRIPT_DIR/cleanup-processed-notes.py"  # legacy fallback
+        fi
+        # cleanup-processed-notes.py only needs the stdlib (no PyYAML import) —
+        # same STDLIB_PYTHON3 idiom as day-close.sh, not the yaml-requiring
+        # scripts/lib/find-python3.sh resolver (would wrongly report "no
+        # python3" on a system that has one without PyYAML installed).
+        cleanup_python3=""
+        for _cleanup_python_candidate in python3 python; do
+            if command -v "$_cleanup_python_candidate" >/dev/null 2>&1; then
+                cleanup_python3="$_cleanup_python_candidate"
+                break
+            fi
+        done
+        unset _cleanup_python_candidate
         log "Running deterministic cleanup..."
-        CLEANUP_OUTPUT=$(python3 "$SCRIPT_DIR/cleanup-processed-notes.py" 2>&1) || true
+        if [ -n "$cleanup_python3" ]; then
+            CLEANUP_OUTPUT=$("$cleanup_python3" "$cleanup_script" 2>&1) || true
+        else
+            CLEANUP_OUTPUT="no python3 interpreter found — skipped"
+        fi
         log "Cleanup: $CLEANUP_OUTPUT"
 
         # If cleanup made changes, commit and push
@@ -405,15 +526,12 @@ case "$1" in
 
         # Alert if LLM failed AND cleanup was needed (only for NEW bold, not deferred 🔄)
         if [ "$BOLD_NEW_AFTER" -ge "$BOLD_NEW_BEFORE" ] && [ "$BOLD_NEW_BEFORE" -gt 0 ]; then
-            # Секреты только в rbw (политика пилота 2026-08-18), env-файлы не используются.
-            TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
-            if [ -z "$TG_TOKEN" ] && command -v rbw >/dev/null 2>&1; then
-                TG_TOKEN=$(rbw get "${IWE_TG_RBW_ENTRY:-telegram-chuck}" 2>/dev/null | head -1 | grep -oE '[0-9]{8,}:[A-Za-z0-9_-]{30,}' || true)
-            fi
-            if [ -n "$TG_TOKEN" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            ENV_FILE="$HOME/.config/aist/env"
+            if [ -f "$ENV_FILE" ]; then
+                set -a; source "$ENV_FILE"; set +a
                 ALERT_TEXT="⚠️ <b>Note-Review canary</b>: Step 10 не сработал ($BOLD_NEW_BEFORE → $BOLD_NEW_AFTER new bold). Deterministic cleanup applied."
                 ALERT_JSON=$(printf '%s' "$ALERT_TEXT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
-                curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
                     -H "Content-Type: application/json" \
                     -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":${ALERT_JSON},\"parse_mode\":\"HTML\"}" >> "$LOG_FILE" 2>&1 || true
             fi

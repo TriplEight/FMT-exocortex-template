@@ -79,7 +79,7 @@ wp: WP-358
 5. Heartbeat self-check: ping в SQLite каждые 30с; miss >90с → `failed` + TG alert
 6. Получить ответ Claude Code (stdout)
 7. Дописать ответ в thread: `[turn:N+1-response, ts:<ISO>] Claude: <ответ>`
-8. Зафиксировать domain event (activity tracking): `activity_log`
+8. Зафиксировать domain event (activity tracking): `activity_log` + WakaTime heartbeat
 9. Отправить ответ в Telegram через `send_telegram_message`
 10. Обновить `SESSION-<id>.md`: `last_turn_at`, `turn_count`, статус
 
@@ -129,7 +129,7 @@ Egress передаёт Claude Code доступ к следующим инст�
 
 5. **Graceful degradation.** VS Code / `claude -p` не запустились → Egress фиксирует timeout → TG «Среда не запущена». Тихий fail запрещён.
 
-6. **Activity tracking.** Каждый обработанный ход пишет domain event `external_session_turn` в `activity_log`. Пропуск логирования = нарушение инварианта.
+6. **Activity tracking.** Каждый обработанный ход пишет domain event `external_session_turn` в `activity_log` и WakaTime heartbeat. Пропуск трекинга = нарушение инварианта.
 
 ---
 

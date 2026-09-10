@@ -45,9 +45,10 @@ IWE_ROOT="${IWE_ROOT:-$HOME/IWE}"
 GOV_REPO="${IWE_GOVERNANCE_REPO:-DS-strategy}"
 SESSION_DIR="$IWE_ROOT/.iwe-runtime/sessions"
 OPEN_LOG="$IWE_ROOT/$GOV_REPO/inbox/open-sessions.log"
-ORZ_DIR="$IWE_ROOT/$GOV_REPO/sessions"
 AGENT_STATUS_SCRIPT="$IWE_ROOT/scripts/agent-status-report.sh"
-mkdir -p "$SESSION_DIR" "$(dirname "$OPEN_LOG")" "$ORZ_DIR"
+# ORZ_DIR resolved further down by resolve_orz_sessions_dir(), once fail()
+# exists -- not created here, see that function's docstring for why.
+mkdir -p "$SESSION_DIR" "$(dirname "$OPEN_LOG")"
 
 CMD="${1:-}"
 shift || true
@@ -57,6 +58,91 @@ now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 now_date() { date +"%Y-%m-%d"; }
 now_month() { date +"%Y-%m"; }
 fail() { echo "session-guard: $1" >&2; exit "${2:-1}"; }
+
+# yaml_task_line <value> -- render a "task: <value>" YAML line, quoting the
+# value only when PyYAML's own writer decides it needs quoting. session-guard
+# used to write this field with a bare `echo "task: $TASK"`: a value
+# containing a literal ": " (a real one arrived 2026-09-09, "РП170: R15-триаж
+# ...") produced a line no strict YAML parser can read back as a mapping,
+# leaving the semaphore ambiguous to any such reader -- see
+# bug-2026-09-09-git-wrapper-blocked-by-corrupt-semaphore.md. Delegates to
+# PyYAML rather than reimplementing the plain-scalar grammar in bash, and
+# falls back to the old bare form if PyYAML is unavailable -- a missing
+# dependency degrades to previous behaviour instead of failing `open`. Not
+# reused for other semaphore fields (e.g. `housekeeping:`/`slug:`, see the
+# comment at their write site) -- those are matched elsewhere by exact
+# raw-string equality and doubling as filename components, so quoting them
+# would trade this bug for a different one, not just extend the same fix.
+# width=10**7 disables PyYAML's default 80-column wrapping (cold review of
+# this same fix, 2026-09-10): ordinary prose long enough to exceed 80
+# columns -- not an edge case -- was folded onto a continuation line that
+# every raw `grep '^task: ' | cut` reader then silently truncated away,
+# reintroducing the same corruption class by length instead of by ": ".
+# Embedded newlines fold the scalar the same way regardless of width, so
+# they are collapsed to spaces first -- this field is documented as
+# single-line, not free-form multi-line text.
+yaml_task_line() {
+  python3 -c '
+import sys
+value = " ".join(sys.argv[1].splitlines())
+try:
+    import yaml
+except ImportError:
+    print("task: %s" % value)
+    raise SystemExit(0)
+sys.stdout.write(yaml.safe_dump({"task": value}, allow_unicode=True, default_flow_style=False, width=10**7).rstrip("\n"))
+' "$1"
+}
+
+# resolve_orz_sessions_dir -- forward-port from ~/IWE/scripts/session-guard.sh
+# (WP-526 Ф2, 29.08; this FMT copy stays on the reduced/freeze-canonical
+# variant per WP-546, so only this one function is ported, not the file).
+# Three-way resolver for the sessions-content root: MC-sessions is created
+# "on demand", not by setup.sh (pilot decision 18.08), so an install that
+# never adopted it must keep working exactly as before this function existed.
+#   1. IWE_SESSIONS_ROOT set explicitly -- always fail-closed if broken,
+#      never falls back: an explicit override is a deliberate choice, a
+#      silent bypass of it would hide a real misconfiguration.
+#   2. Default path ($IWE_ROOT/MC-sessions) exists and is a valid git repo
+#      -- the normal case for an already-migrated checkout.
+#   3. Default path exists but ISN'T a valid git repo -- looks like a
+#      broken migration, not a fresh install. Fail-closed: falling back
+#      here would create a second, undetected source of truth for an
+#      already-migrated user.
+#   4. Default path doesn't exist at all -- genuinely unmigrated. Legacy
+#      fallback to "$GOV_REPO/sessions" with a visible WARN, same
+#      behaviour as before this function existed.
+resolve_orz_sessions_dir() {
+  if [ -n "${IWE_SESSIONS_ROOT:-}" ]; then
+    if [ -d "$IWE_SESSIONS_ROOT" ] && git -C "$IWE_SESSIONS_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+      echo "$IWE_SESSIONS_ROOT"
+      return 0
+    fi
+    fail "IWE_SESSIONS_ROOT=$IWE_SESSIONS_ROOT задан явно, но недоступен или не git-репозиторий"
+  fi
+
+  local default_mc="$IWE_ROOT/MC-sessions"
+  if [ -d "$default_mc" ]; then
+    if git -C "$default_mc" rev-parse --git-dir >/dev/null 2>&1; then
+      echo "$default_mc"
+      return 0
+    fi
+    fail "MC-sessions существует ($default_mc), но не похож на git-репозиторий -- похоже на сломанную мигрированную установку, не откатываюсь на legacy-путь молча"
+  fi
+
+  echo "WARN: MC-sessions не найден ($default_mc) -- использую legacy-путь \$GOV_REPO/sessions (обычное поведение немигрированной установки шаблона)" >&2
+  local legacy="$IWE_ROOT/$GOV_REPO/sessions"
+  mkdir -p "$legacy"
+  echo "$legacy"
+}
+# Passive default here (no resolver call, no side effect) -- this line runs
+# for EVERY subcommand, including ones unrelated to sessions storage
+# (pre-commit-check fires on every git commit as a hook; note-file,
+# lock-hot-file don't touch ORZ_DIR at all). Calling the strict resolver
+# unconditionally would print its WARN on every commit for an unmigrated
+# install, and hard-fail unrelated git operations for a broken migration.
+# `open` (the only writer) calls resolve_orz_sessions_dir() itself, below.
+ORZ_DIR="$IWE_ROOT/$GOV_REPO/sessions"
 
 semaphore_epoch() {
   local semaphore="$1" timestamp=""
@@ -186,8 +272,15 @@ select_semaphore() {
       [ -z "$cand" ] && continue
       cand_wp=$(grep "^wp: " "$cand" | cut -d' ' -f2- || true)
       cand_slug=$(grep "^slug: " "$cand" | cut -d' ' -f2- || true)
-      if { [ -n "$want_wp" ] && [ "$cand_wp" = "$want_wp" ]; } || \
-         { [ -n "$want_slug" ] && [ "$cand_slug" = "$want_slug" ]; }; then
+      # WP-530 Ф12 (20.08, пир-сессия с Codex): with both selectors given, this
+      # must be an intersection -- a plain OR (as this copy had until now)
+      # matches a stale sibling session sharing only the wp, causing false
+      # ambiguity. Synced from the canonical ~/IWE/scripts/session-guard.sh
+      # (WP-484 Ф49, 04.08) -- same fix, this copy just hadn't received it.
+      if { [ -n "$want_wp" ] && [ -n "$want_slug" ] &&
+           [ "$cand_wp" = "$want_wp" ] && [ "$cand_slug" = "$want_slug" ]; } || \
+         { [ -z "$want_slug" ] && [ -n "$want_wp" ] && [ "$cand_wp" = "$want_wp" ]; } || \
+         { [ -z "$want_wp" ] && [ -n "$want_slug" ] && [ "$cand_slug" = "$want_slug" ]; }; then
         matches+=("$cand")
       fi
     done <<< "$candidates"
@@ -245,6 +338,7 @@ PERSONALITY=""
 SESSION_ID_ARG=""
 CLEANUP_ORPHANS=0
 FORCE_NO_REFLECTION=""
+CLOSE_PATH=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -259,8 +353,10 @@ while [[ $# -gt 0 ]]; do
     --since)  SINCE="$2"; shift 2 ;;
     --cleanup-orphans) CLEANUP_ORPHANS=1; shift ;;
     --force-no-reflection) FORCE_NO_REFLECTION="$2"; shift 2 ;;
+    --close-path) CLOSE_PATH="$2"; shift 2 ;;
     --)       shift; POSITIONAL+=("$@"); break ;;
-    -*)       shift ;;
+    # WP-7 Ф83: was a silent `shift` -- unrecognized flags vanished with no diagnostic.
+    -*)       fail "неизвестный флаг: $1" 1 ;;
     *)        POSITIONAL+=("$1"); shift ;;
   esac
 done
@@ -305,6 +401,20 @@ if [ "$CMD" = "open" ]; then
       echo "---"
       echo "agent: $AGENT"
       echo "personality: $PERSONALITY"
+      # NOT run through yaml_task_line, unlike `task:` in the main open path
+      # below: $HOUSEKEEPING is also interpolated straight into a filename
+      # (HK_FILE, above) and matched elsewhere by exact raw-string equality
+      # (select_semaphore, close, note-file, orphan audit all grep
+      # '^slug: ' | cut and compare to the CLI argument verbatim) -- it is a
+      # path-safe slug token by convention, not free-form prose like `task`.
+      # Quoting only this line would not even close the YAML-parseability
+      # gap it shares with `slug:` below (same raw value, same document)
+      # without also quoting `slug:` -- and quoting `slug:` breaks every
+      # exact-match consumer. A colon here already produces an unparseable
+      # document for a strict reader regardless; the real fix is
+      # validating/restricting `--housekeeping` to a path-safe token, a
+      # separate, larger decision than this bug's scope (bug-2026-09-09-
+      # git-wrapper-blocked-by-corrupt-semaphore.md, "Резолюция", 2026-09-10).
       echo "housekeeping: $HOUSEKEEPING"
       # bug-2026-07-10 (Day Close): select_semaphore() only matches on `wp:`/`slug:`
       # lines. Without this, 2+ open housekeeping semaphores are permanently
@@ -415,6 +525,10 @@ if [ "$CMD" = "open" ]; then
   CLEAN_SLUG="${SLUG:-$WP}"
   CLEAN_SLUG="${CLEAN_SLUG#"$(now_date)"-}"
   ORZ_BASENAME="$(now_month)/$(now_date)-${CLEAN_SLUG}.md"
+  # WP-526 Ф2 (29.08): `open` is the only writer, so it's the only place that
+  # needs the strict (fail-closed-if-broken) resolution -- overrides the
+  # passive default set at the top of the script for read-only commands.
+  ORZ_DIR="$(resolve_orz_sessions_dir)"
   ORZ_FILE="$ORZ_DIR/$ORZ_BASENAME"
   mkdir -p "$(dirname "$ORZ_FILE")"
   {
@@ -422,11 +536,13 @@ if [ "$CMD" = "open" ]; then
     echo "agent: $AGENT"
     echo "personality: $PERSONALITY"
     echo "wp: $WP"
-    echo "task: ${TASK:-}"
+    echo "$(yaml_task_line "${TASK:-}")"
     echo "slug: ${SLUG:-$WP}"
     echo "opened_at: $(now_iso)"
     echo "created_at: $(now_iso)"
     echo "session_id: $SESSION_ID"
+    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && echo "harness_session_id: $CLAUDE_CODE_SESSION_ID"
+    echo "close_path: ${CLOSE_PATH:-unknown}"
     echo "orz_file: $ORZ_BASENAME"
     # WP-484 (08.08, Kimi diagnosis + pilot report): regular sessions never
     # recorded a pid at all, so sweep_orphaned_semaphores()'s dead-pid check —
@@ -505,9 +621,20 @@ EOF
 fi
 
 # --- helpers for ORZ validation ---
-validate_orz() {
+# Ported from ~/IWE/scripts/session-guard.sh (root commit 2779845553, WP-484
+# line AC, 31.08): batches the git-tracked lookup for `audit` (one
+# `git ls-files` instead of one per file) and reads each file once with
+# bash builtin pattern matching instead of ~13 grep/sed/head subprocesses.
+# Root's function already carried the WP-520 case-8 remote-refs fallback
+# below (published-but-unstaged ORZ files) before this batching commit --
+# ported together since it is the same function body, not a separate
+# addition to this session's scope.
+validate_orz() { # <orz-path> <agent> [orz-base-dir, default $ORZ_DIR] [tracked-set-file, optional]
   local orz="$1"
   local agent="$2"
+  local orz_base_dir="${3:-$ORZ_DIR}"
+  orz_base_dir="${orz_base_dir%/}"
+  local tracked_set_file="${4:-}"
   local errors=0
 
   # 1. file exists
@@ -516,19 +643,38 @@ validate_orz() {
     return 1
   fi
 
+  # Checks 2-4 read the file once into a bash variable and use builtin
+  # pattern matching instead of one grep/sed/head subprocess per check.
+  # `$'\n'` is prepended so "key at the very start of the file" and "key
+  # after a newline" are the same substring match, matching what the old
+  # `grep -qE "^key:"` anchor covered without needing multiline `^`.
+  local nl=$'\n'
+  local content
+  content="$(<"$orz")" 2>/dev/null || content=""
+  local content_nl="${nl}${content}"
+
   # 2. frontmatter keys
   local keys=("date:" "type:" "wp:" "duration_h:" "artifacts:" "agent:")
   for key in "${keys[@]}"; do
-    if ! grep -qE "^${key}" "$orz"; then
-      echo "  ❌ в frontmatter отсутствует ключ '$key'" >&2
-      errors=$((errors + 1))
-    fi
+    case "$content_nl" in
+      *"${nl}${key}"*) : ;;
+      *)
+        echo "  ❌ в frontmatter отсутствует ключ '$key'" >&2
+        errors=$((errors + 1))
+        ;;
+    esac
   done
 
   # 3. agent value
-  local orz_agent
-  orz_agent=$(grep -E "^agent:" "$orz" | sed 's/^agent: *//' | head -1 || true)
-  if [ -n "$orz_agent" ]; then
+  # `[ -n "$agent" ]` guard: a caller that doesn't care about agent identity
+  # (the archival `audit` scan) passes "" and skips this comparison outright,
+  # instead of re-deriving the file's own value and comparing it to itself
+  # (a self-match that could never fail -- the bug this port also fixes).
+  local orz_agent="" agent_re="${nl}agent:[[:space:]]*([^${nl}]*)"
+  if [[ "$content_nl" =~ $agent_re ]]; then
+    orz_agent="${BASH_REMATCH[1]}"
+  fi
+  if [ -n "$agent" ] && [ -n "$orz_agent" ]; then
     if [ "$orz_agent" != "$agent" ] && \
        ! { [ "$agent" = "kimi" ] && [ "$orz_agent" = "kimi-headless" ]; }; then
       echo "  ❌ agent в ORZ ('$orz_agent') не совпадает с агентом сессии ('$agent')" >&2
@@ -539,18 +685,55 @@ validate_orz() {
   # 4. required sections
   local sections=("## Главный инсайт" "## Контекст" "## Достигнуто" "## Ключевые решения")
   for sec in "${sections[@]}"; do
-    if ! grep -qF "$sec" "$orz"; then
-      echo "  ❌ отсутствует секция '$sec'" >&2
-      errors=$((errors + 1))
-    fi
+    case "$content" in
+      *"$sec"*) : ;;
+      *)
+        echo "  ❌ отсутствует секция '$sec'" >&2
+        errors=$((errors + 1))
+        ;;
+    esac
   done
 
   # 5. git tracked
   local rel
-  rel="$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[2], sys.argv[3]))" -- "$orz" "$ORZ_DIR")"
-  if ! git -C "$ORZ_DIR" ls-files --error-unmatch "$rel" >/dev/null 2>&1; then
-    echo "  ❌ ORZ-файл не добавлен в git index (git add $rel)" >&2
-    errors=$((errors + 1))
+  local is_tracked=1
+  if [ -n "$tracked_set_file" ] && [ -s "$tracked_set_file" ]; then
+    # Batch path (audit call site): one `git ls-files` snapshot up front
+    # instead of one `git ls-files --error-unmatch` + python3 relpath per
+    # file. Safe to inline the relpath here because this call site's `orz`
+    # always comes from `find "$ORZ_DIR" ...`, so it is always a literal
+    # `$orz_base_dir/...` path; the fallback below (other callers) keeps
+    # os.path.relpath for the non-prefixed cases it covers.
+    rel="${orz#"$orz_base_dir"/}"
+    grep -qxF "$rel" "$tracked_set_file" && is_tracked=0
+  else
+    rel="$(python3 -c "import os,sys; print(os.path.relpath(sys.argv[2], sys.argv[3]))" -- "$orz" "$orz_base_dir")"
+    git -C "$orz_base_dir" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && is_tracked=0
+  fi
+  if [ "$is_tracked" -ne 0 ]; then
+    # A file whose commit went to main through an isolated worktree cannot
+    # be staged in the live checkout (busy on a foreign branch). A file
+    # present in ANY published remote-tracking ref is a strictly stronger
+    # proof than a staged-only file: accept it as the index-equivalent.
+    local published_ref=""
+    local remote_ref
+    while IFS= read -r remote_ref; do
+      [ -z "$remote_ref" ] && continue
+      # Content must match too -- path-only acceptance would let a locally
+      # edited copy pass on legacy semaphores with no registered `file:`
+      # line for the scope gate's cmp to catch.
+      if git -C "$orz_base_dir" cat-file -e "$remote_ref:./$rel" 2>/dev/null &&
+         git -C "$orz_base_dir" cat-file blob "$remote_ref:./$rel" 2>/dev/null | cmp -s - "$orz"; then
+        published_ref="$remote_ref"
+        break
+      fi
+    done <<< "$(git -C "$orz_base_dir" for-each-ref --format='%(refname)' refs/remotes 2>/dev/null)"
+    if [ -n "$published_ref" ]; then
+      echo "  ✓ ORZ-файл не в git index, но побайтно совпадает с опубликованным blob в '$published_ref' — принят как эквивалент" >&2
+    else
+      echo "  ❌ ORZ-файл не добавлен в git index (git add $rel) и не совпадает ни с одним blob в refs/remotes/*" >&2
+      errors=$((errors + 1))
+    fi
   fi
 
   return $errors
@@ -591,6 +774,14 @@ if [ "$CMD" = "close" ]; then
     OPENED_DATE="${OPENED_DATE:-$(now_date)}"
     ORZ_BASENAME="${OPENED_DATE:0:7}/${OPENED_DATE}-${SLUG:-$WP}.md"
   fi
+  # WP-526 Ф2 (29.08): must resolve the same way `open` did, or `close` looks
+  # for the ORZ file at the passive legacy default while `open` actually
+  # wrote it under MC-sessions -- validate_orz below would then fail on an
+  # existing, correctly-written file. This semaphore has no orz_sessions_dir
+  # field (root's more evolved variant does) to read the resolved dir back
+  # from, but the resolver is a pure function of current filesystem state,
+  # so recomputing it here agrees with what `open` computed moments earlier.
+  ORZ_DIR="$(resolve_orz_sessions_dir)"
   ORZ_FILE="$ORZ_DIR/$ORZ_BASENAME"
 
   echo "Session CLOSE: проверяю ORZ $ORZ_FILE ..."
@@ -621,6 +812,24 @@ if [ "$CMD" = "close" ]; then
     RUNNER_OK="$card"
     break
   done
+
+  # WP-484 Ф118 / WP-530 Ф18 (порт из авторского source, 30.08.2026): сессия,
+  # открытая с "open --close-path peer-session", по определению никогда не
+  # создаёт RUN-quick-close-*.md — её протокол закрытия (DP.SC.154 Шаг
+  # 4.5.1/4.5.2) прямой git commit, не раннер. Без этого обхода close требовал
+  # у пир-сессии карточку чужого ритуала (живой отказ 30.08). close_path
+  # записан этим же скриптом при open — достаточное свидетельство.
+  # ${SEM_FILE:-}: T22 sources this window standalone under set -u with no
+  # semaphore stub; empty path -> grep fails -> bypass correctly not taken.
+  if [ -z "$RUNNER_OK" ] && grep -q '^close_path: peer-session$' "${SEM_FILE:-}" 2>/dev/null; then
+    RUNNER_OK="declared-peer-session:$SLUG"
+    # WP-484 Ф133 (порт из авторского source, найдено 04.09.2026, пир-сессия
+    # 2026-09-04-23-wp561-peer-session-closed-ledger-gap): без FORCED_CARD
+    # блок ledger session_closed_direct ниже не срабатывает для этой ветки —
+    # пир-сессии молча оставались без записи о закрытии в дневном журнале.
+    FORCED_CARD="declared-peer-session:$SLUG"
+    echo "Session CLOSE: close_path=peer-session объявлен при open — раннер не требуется (WP-484 Ф118)." >&2
+  fi
 
   # --force-no-reflection (WP-484, 08.08, пилот): рефлексия про настроение дня
   # блокирует close, даже когда содержательная работа (commit+push) уже
@@ -692,6 +901,27 @@ print(json.dumps({"wp": sys.argv[1], "slug": sys.argv[2], "agent": sys.argv[3], 
 $_repo"
     _warn_unpushed "$_repo"
   done < <(cat "$_sem_read" 2>/dev/null || true)
+
+  # Best-effort атрибуция ТОЛЬКО для закрытий, обошедших process-runner.py
+  # (порт из авторского source, WP-484 Ф133 — найдено 04.09.2026, пир-сессия
+  # 2026-09-04-23-wp561-peer-session-closed-ledger-gap: этот блок в FMT-копии
+  # отсутствовал вовсе, из-за чего пир-сессии молча не попадали в дневной
+  # журнал). FORCED_CARD непустой на bypass-путях выше (peer-session,
+  # force-no-reflection). Условие обязательно: без него событие писалось бы и
+  # для нормального завершённого раннера, задваивая r23_verdict тем же
+  # смыслом под другим именем. Никогда не проваливает close.
+  if [ -n "${FORCED_CARD:-}" ] && [ -f "$IWE_ROOT/$GOV_REPO/scripts/ledger-append.sh" ]; then
+    _cp_from_sem=$(grep "^close_path: " "$_sem_read" 2>/dev/null | cut -d' ' -f2- || echo "unknown")
+    _direct_event=$(python3 -c '
+import json, sys
+print(json.dumps({"wp": sys.argv[1], "slug": sys.argv[2], "agent": sys.argv[3], "close_path": sys.argv[4]}))
+' "$WP" "$SLUG" "$AGENT" "$_cp_from_sem" 2>/dev/null) || _direct_event=""
+    if [ -n "$_direct_event" ]; then
+      bash "$IWE_ROOT/$GOV_REPO/scripts/ledger-append.sh" day "$(now_date)" session_closed_direct "$_direct_event" session-guard \
+        >/dev/null 2>&1 || echo "  ⚠️  ledger session_closed_direct не записан (best-effort, не блокирует close)" >&2
+    fi
+  fi
+
   exit 0
 fi
 
@@ -887,6 +1117,13 @@ if [ "$CMD" = "renew" ]; then
 fi
 
 if [ "$CMD" = "audit" ]; then
+  # WP-526 Ф2 fix (29.08, peer-session 2026-08-29-06-wp526-worktree-guard-continue):
+  # open (line ~482) and close (line ~668) already re-resolve ORZ_DIR through
+  # resolve_orz_sessions_dir() before using it -- audit never did, so it kept
+  # reading the top-level legacy default (line 110) even on an install that
+  # already migrated to MC-sessions. Same one-line fix, same place in the
+  # command, as the other two commands.
+  ORZ_DIR="$(resolve_orz_sessions_dir)"
   if [ "$CLEANUP_ORPHANS" -eq 1 ]; then
     sweep_orphaned_semaphores
     echo
@@ -932,15 +1169,24 @@ if [ "$CMD" = "audit" ]; then
 
   # 3. ORZ-файлы с невалидным frontmatter/секциями
   echo "ORZ-файлы с дефектами (после $SINCE):"
+  # Ported alongside validate_orz() (root commit 2779845553): one `git
+  # ls-files` snapshot for the whole tree instead of one per file inside
+  # validate_orz. No agent extraction here either -- validate_orz's own
+  # "agent value" check always re-derived the value from this same file
+  # and compared it against whatever was passed, so a self-fed value could
+  # never fail; passing "" skips that no-op comparison instead of redoing
+  # the extraction to feed it.
+  AUDIT_TRACKED_SET=$(mktemp)
+  git -C "$ORZ_DIR" ls-files > "$AUDIT_TRACKED_SET" 2>/dev/null
   find "$ORZ_DIR" -maxdepth 2 -mindepth 2 -name '*.md' -type f ! -name '00-index.md' -newermt "$SINCE" 2>/dev/null | while read -r orz; do
     tmp_errors=$(mktemp)
-    orz_agent=$(grep -E "^agent:" "$orz" | sed 's/^agent: *//' | head -1 || true)
-    if ! validate_orz "$orz" "${orz_agent:-unknown}" >"$tmp_errors" 2>&1 && [ -s "$tmp_errors" ]; then
+    if ! validate_orz "$orz" "" "$ORZ_DIR" "$AUDIT_TRACKED_SET" >"$tmp_errors" 2>&1 && [ -s "$tmp_errors" ]; then
       echo "  $(basename "$orz"):"
       sed 's/^/    /' "$tmp_errors"
     fi
     rm -f "$tmp_errors"
   done
+  rm -f "$AUDIT_TRACKED_SET"
   echo
 
   # 4. Untracked ORZ-файлы

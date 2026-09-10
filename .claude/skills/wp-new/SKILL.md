@@ -5,6 +5,7 @@ argument-hint: "[название РП]"
 version: 1.0.0
 layer: L1
 status: active
+browser_safe: false
 triggers:
   slash: [/wp-new]
   phrases: []
@@ -55,7 +56,7 @@ gates_rationale: "операционный скилл; WP Gate применим 
 ## Шаг 1. Сбор информации
 
 Запроси или определи:
-- **Название:** формулировка артефакта (не задачи)
+- **Название:** формулировка артефакта (не задачи). **Обязательный шаг (WP-563):** вызвать Skill `artifactor` с сырым описанием задачи — не формулировать название самому. Взять поле `artifact` из JSON-ответа как кандидат. Ответ `{"error": "INSUFFICIENT_INPUT"}` → запросить у пилота более развёрнутое описание, повторить вызов. Название пилоту не показывать, минуя этот вызов.
 - **Репо:** целевой репозиторий
 - **Бюджет:** оценка в часах
 - **Приоритет:** критический / высокий / средний / низкий
@@ -91,11 +92,12 @@ gates_rationale: "операционный скилл; WP Gate применим 
 
 **Синтаксис скрипта:**
 ```bash
-touch ~/.claude/state/wp-consent-{N}   # WP Gate — обязательно перед запуском
+touch "${IWE_ROOT:-$HOME/IWE}/.claude/state/wp-consent-{N}"   # WP Gate — обязательно перед запуском (тот же путь, что проверяет create-wp.sh, — НЕ ~/.claude, issue #556)
 bash "$IWE_SCRIPTS/create-wp.sh" \
   --title "Название РП" \
   --budget 5h \
   --priority P2 \
+  --verification-class open-loop \  # обязателен всегда: trivial|closed-loop|open-loop|problem-framing
   --state "belonging (Оснащённость): пилот без Х → с Х" \  # обязателен при наличии docs/state-axes-registry.yaml
   --hypothesis H-101 \ # для tests/enables/responds
   --hypothesis-relation tests \ # tests|enables|responds|researches|operational
@@ -114,6 +116,7 @@ budget: {Nh}
 created: {YYYY-MM-DD}
 last_session: {YYYY-MM-DD}
 related: []
+verification_class: {trivial|closed-loop|open-loop|problem-framing}
 state_transition: "{ось (Русское имя): из → в}"
 hypothesis: "{H-NNN или —}"
 hypothesis_relation: "{tests|enables|responds|researches|operational}"

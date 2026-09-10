@@ -3,7 +3,7 @@
 # see DP.SC.159, DP.ROLE.059
 # day-close-prepare.sh — one-call data digest for the Day Close protocol (issue #234).
 # Replaces ~10 separate agent round-trips (commit scan, drift scan, index health,
-# lesson stats, dirty repos) with a single compact digest, so Day Close
+# lesson stats, WakaTime, dirty repos) with a single compact digest, so Day Close
 # cost does not scale with the size of the day's conversation.
 #
 # Usage:
@@ -131,11 +131,20 @@ echo "--- 6. LESSON / MEMORY STATS ---"
 for m in $(memory_files); do
   [ -f "$m" ] || continue
   LINES=$(wc -l < "$m" | tr -d ' ')
-  LESSONS=$(grep -c "lessons_" "$m" 2>/dev/null || true)
+  # Lesson files are named lesson-<topic>.md / lessons_<topic>.md — match both
+  # spellings; the old "lessons_" literal never matched and always counted 0 (#559).
+  LESSONS=$(grep -cE "lessons?[-_]" "$m" 2>/dev/null || true)
   echo "MEMORY.md: $LINES lines (flag if >200), $LESSONS lesson references (target ≤8)"
 done
 
-echo "--- 7. PEER SESSIONS TODAY ---"
+echo "--- 7. WAKATIME ---"
+if [ -x "$HOME/.wakatime/wakatime-cli" ]; then
+  "$HOME/.wakatime/wakatime-cli" --today 2>/dev/null || echo "(CLI error — use Neon fallback: domain_event coding_time)"
+else
+  echo "(CLI not installed — use Neon fallback: domain_event coding_time, or mark 'pending Neon')"
+fi
+
+echo "--- 8. PEER SESSIONS TODAY ---"
 if [ -f "$GOV/sessions/00-index.md" ]; then
   grep "$TODAY" "$GOV/sessions/00-index.md" || echo "(none today)"
 else

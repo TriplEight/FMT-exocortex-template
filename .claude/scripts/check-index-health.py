@@ -25,6 +25,16 @@ CATALOG.md, TOC.md, MAPSTRATEGIC.md, Projects.md, *-registry.md, *-index.md,
     OK: всё под порогами.
     Размер сам по себе — слабый маркер: реестр 300 РП × 100 ch = 30KB.
 
+    MEMORY.md — отдельные пороги: FAIL на пределе загрузчика контекста
+    (~24.4 KiB символов), WARN — запас до него (issue #677: живой индекс
+    памяти обрезается загрузчиком раньше, чем срабатывают общие пороги).
+
+Обход дерева следует symlink'ам (issue #677: `memory/` на типовой установке —
+symlink на auto-memory) с защитой от циклов. Каталог, где лежит живой
+MEMORY.md, считается хранилищем памяти — заметки вида *-index.md/*-catalog.md
+внутри него не считаются реестрами (иначе это новый класс ложных срабатываний
+после включения symlink'ов).
+
 Пропуск файлов через комментарий в начале файла:
     <!-- index-health: skip --> — не сканировать
     <!-- index-health: skip-cells --> — не проверять ячейки таблиц
@@ -32,6 +42,7 @@ CATALOG.md, TOC.md, MAPSTRATEGIC.md, Projects.md, *-registry.md, *-index.md,
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -41,6 +52,13 @@ from pathlib import Path
 # Дефект: статус ✅ проставлен, а номер не обёрнут в ~~ → строка выглядит активной.
 _WP_NUM_CELL = re.compile(r"^\*{0,2}~{0,2}\*{0,2}\d+\*{0,2}~{0,2}\*{0,2}$")
 _DONE_EMOJI = "✅"
+_STATUS_EMOJI = (
+    "✅", "🔄", "⏳", "⏸", "↗️", "📦", "🚧", "❌", "⚪",
+    "🟢", "🟡", "🔴", "⚫",
+)
+_CELL_LEAD_MARKUP = "*~ \t"
+_STATUS_HEADERS = {"ст", "статус", "status", "state"}
+_WP_NUMBER_HEADERS = {"#", "№", "wp", "рп", "id"}
 
 NAME_PATTERNS = {
     "MEMORY.md",
@@ -67,11 +85,42 @@ CELL_FAIL = 400
 # Размер сам по себе — слабый маркер: реестр из 300 РП × 100 chars = 30KB, норма.
 # Настоящие маркеры — длинные строки/ячейки.
 
+# MEMORY.md — отдельные пороги (issue #677): SIZE_WARN/FAIL выше предела
+# загрузчика контекста, поэтому для живого индекса памяти он недостижим по
+# конструкции — файл раньше обрежется загрузчиком, чем сработает этот порог.
+# FAIL = сам предел загрузчика (~24.4 KiB символов), WARN = запас до него.
+MEMORY_SIZE_FAIL = 24986
+MEMORY_SIZE_WARN = int(MEMORY_SIZE_FAIL * 0.85)
+
+
+def _plain_table_cell(cell: str) -> str:
+    return cell.strip("*~` \t").rstrip(".").casefold()
+
+
+def _status_column(cells: list[str]) -> int | None:
+    """Find the status column from a Markdown registry header."""
+    if not cells or _plain_table_cell(cells[0]) not in _WP_NUMBER_HEADERS:
+        return None
+    for index, cell in enumerate(cells[1:], start=1):
+        if _plain_table_cell(cell) in _STATUS_HEADERS:
+            return index
+    return None
+
+
+def _status_cell(cells: list[str], status_column: int | None) -> str | None:
+    """Return the header-bound status, with a legacy emoji fallback."""
+    if status_column is not None and status_column < len(cells):
+        return cells[status_column].lstrip(_CELL_LEAD_MARKUP)
+    for cell in cells[1:]:
+        head = cell.lstrip(_CELL_LEAD_MARKUP)
+        if head.startswith(_STATUS_EMOJI):
+            return head
+    return None
+
 
 def check_file(path: Path) -> dict:
-    size = path.stat().st_size
     out = {
-        "size": size,
+        "size": 0,
         "long_lines": [],      # list of (lineno, char_len)
         "long_cells": [],      # list of (lineno, cell_idx, char_len)
         "done_no_strike": [],  # list of (lineno, wp_number) — ✅ без зачёркивания
@@ -84,6 +133,10 @@ def check_file(path: Path) -> dict:
     except (UnicodeDecodeError, OSError):
         out["skip"] = True
         return out
+    # Символы, не байты (issue #677) — докстринг обещает char count, а
+    # кириллица в UTF-8 весит вдвое больше символа: порог, сверенный по
+    # байтам, срабатывает не на том объёме, который считает загрузчик.
+    out["size"] = len(text)
 
     head = text[:512]
     # index-health: skip отключает проверки РАЗДУТИЯ (размер/длина/ячейки),
@@ -93,9 +146,12 @@ def check_file(path: Path) -> dict:
     if "<!-- index-health: skip-cells -->" in head:
         out["skip_cells"] = True
 
+    status_column = None
     for lineno, line in enumerate(text.splitlines(), start=1):
         n = len(line)
         is_table_row = line.lstrip().startswith("|")
+        if not is_table_row:
+            status_column = None
         # skip-cells: таблица с допустимо большими ячейками → не алертим
         # ни на ячейки, ни на длину самой строки таблицы
         if not size_skip and n > LINE_WARN and not (out["skip_cells"] and is_table_row):
@@ -105,14 +161,20 @@ def check_file(path: Path) -> dict:
             # markdown table row: split by | and drop outer empties
             raw = line.split("|")
             cells = [c.strip() for c in raw[1:-1]] if len(raw) >= 3 else []
+            detected_status_column = _status_column(cells)
+            if detected_status_column is not None:
+                status_column = detected_status_column
             # skip separator rows (all cells are dashes)
             if cells and all(set(c) <= set("-: ") for c in cells):
                 continue
-            # done-форматирование: строка-РП с ✅, но номер не зачёркнут
-            if cells and _WP_NUM_CELL.match(cells[0]) and _DONE_EMOJI in line \
-                    and "~~" not in cells[0]:
-                num = re.sub(r"[*~]", "", cells[0])
-                out["done_no_strike"].append((lineno, num))
+            # done-форматирование: только ведущий эмодзи ЯЧЕЙКИ СТАТУСА
+            # задаёт состояние РП. Галочка внутри описания завершённой фазы не
+            # превращает активный РП в закрытый (issue #531).
+            if cells and _WP_NUM_CELL.match(cells[0]) and "~~" not in cells[0]:
+                status = _status_cell(cells, status_column)
+                if status is not None and status.startswith(_DONE_EMOJI):
+                    num = re.sub(r"[*~]", "", cells[0])
+                    out["done_no_strike"].append((lineno, num))
             if not out["skip_cells"] and not size_skip:
                 for idx, cell in enumerate(cells):
                     cn = len(cell)
@@ -121,29 +183,73 @@ def check_file(path: Path) -> dict:
     return out
 
 
-def classify(findings: dict) -> str:
+def classify(findings: dict, size_warn: int = SIZE_WARN, size_fail: int = SIZE_FAIL) -> str:
+    # Defaults keep the pre-#677 single-arg call signature working for
+    # existing external callers (setup/test-update-edge-cases.sh T20) that
+    # never needed MEMORY.md's separate thresholds — main() below still
+    # passes them explicitly for that one filename.
     size = 0 if findings["size_skip"] else findings["size"]
     max_line = max((n for _, n in findings["long_lines"]), default=0)
     max_cell = max((n for _, _, n in findings["long_cells"]), default=0)
-    if size > SIZE_FAIL or max_line > LINE_FAIL or max_cell > CELL_FAIL:
+    if size > size_fail or max_line > LINE_FAIL or max_cell > CELL_FAIL:
         return "FAIL"
-    if size > SIZE_WARN or max_line > LINE_WARN or max_cell > CELL_WARN \
+    if size > size_warn or max_line > LINE_WARN or max_cell > CELL_WARN \
             or findings["done_no_strike"]:
         return "WARN"
     return "OK"
 
 
+def _walk_dirs(root: Path):
+    """os.walk with followlinks, guarded against symlink cycles.
+
+    rglob() does not descend into symlinked directories at all (issue #677) —
+    live indexes under `memory/` (a symlink to auto-memory on a standard
+    install) never reach the scanner. followlinks=True fixes that, at the
+    cost of needing an explicit cycle guard: a symlink loop would otherwise
+    walk forever.
+    """
+    visited_real_dirs: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        real_dir = os.path.realpath(dirpath)
+        if real_dir in visited_real_dirs:
+            dirnames[:] = []
+            continue
+        visited_real_dirs.add(real_dir)
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        yield Path(dirpath), filenames
+
+
+def _find_memory_dirs(root: Path) -> set[Path]:
+    """Directories containing a live MEMORY.md — the memory store itself.
+
+    Notes inside it named like a registry (`*-index.md`, `*-catalog.md`) are
+    ordinary memory notes, not maintained indexes (issue #677) — flagging
+    them once symlinks are followed would be a new false-positive class.
+    """
+    return {
+        dirpath
+        for dirpath, filenames in _walk_dirs(root)
+        if "MEMORY.md" in filenames
+    }
+
+
 def iter_index_files(root: Path):
-    for path in root.rglob("*.md"):
-        if any(p in SKIP_DIRS for p in path.parts):
-            continue
-        if path.name in NAME_PATTERNS:
-            yield path
-            continue
-        for pat in GLOB_PATTERNS:
-            if path.match(pat):
+    memory_dirs = _find_memory_dirs(root)
+    for dirpath, filenames in _walk_dirs(root):
+        in_memory_dir = dirpath in memory_dirs
+        for filename in filenames:
+            if not filename.endswith(".md"):
+                continue
+            path = dirpath / filename
+            if filename in NAME_PATTERNS:
                 yield path
-                break
+                continue
+            if in_memory_dir:
+                continue
+            for pat in GLOB_PATTERNS:
+                if path.match(pat):
+                    yield path
+                    break
 
 
 def fmt_file_line(path: Path, root: Path, findings: dict) -> str:
@@ -174,7 +280,11 @@ def main() -> int:
         if findings["skip"]:
             buckets["SKIP"].append((path, findings))
             continue
-        buckets[classify(findings)].append((path, findings))
+        if path.name == "MEMORY.md":
+            size_warn, size_fail = MEMORY_SIZE_WARN, MEMORY_SIZE_FAIL
+        else:
+            size_warn, size_fail = SIZE_WARN, SIZE_FAIL
+        buckets[classify(findings, size_warn, size_fail)].append((path, findings))
 
     total = sum(len(v) for v in buckets.values())
     print(f"Index health scan — root: {root}")

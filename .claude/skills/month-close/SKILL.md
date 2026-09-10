@@ -5,6 +5,7 @@ argument-hint: ""
 version: 1.0.0
 layer: L1
 status: active
+browser_safe: false
 triggers:
   slash: [/month-close]
   phrases: []
@@ -55,9 +56,9 @@ Month Close = протокол. Исполнять ТОЛЬКО пошагово
 **1b. Коммиты за месяц.**
 
 ```bash
-for repo in $(ls {{HOME_DIR}}/IWE/); do
-  if [ -d {{HOME_DIR}}/IWE/$repo/.git ]; then
-    count=$(git -C {{HOME_DIR}}/IWE/$repo log --since="$MONTH_START" --until="$MONTH_END" --oneline --no-merges 2>/dev/null | wc -l)
+for repo in $(ls $HOME/IWE/); do
+  if [ -d $HOME/IWE/$repo/.git ]; then
+    count=$(git -C $HOME/IWE/$repo log --since="$MONTH_START" --until="$MONTH_END" --oneline --no-merges 2>/dev/null | wc -l)
     [ "$count" -gt 0 ] && echo "$repo: $count"
   fi
 done
@@ -84,9 +85,9 @@ HOT-лимит превышен → понизить horizon в frontmatter ну
 
 > Агрегация недельных мультипликаторов, НЕ среднее дневных.
 
-1. **Физическое время месяца** — из внешнего источника, если подключён (иначе шаг пропущен)
+1. **WakaTime месяца** — сумма физического времени за все дни месяца
 2. **Бюджет закрыт за месяц** — сумма `Бюджет закрыт` из всех Week Report'ов месяца
-3. **Мультипликатор месяца** = Бюджет закрыт / физическое время. Формат: `N.Nx` (если время отслеживается)
+3. **Мультипликатор месяца** = Бюджет закрыт / WakaTime. Формат: `N.Nx`
 4. **Динамика** — сравнить с прошлым месяцем (рост / падение / стабильно)
 
 ### 3. Ретроспектива метрик (человек + агент)
@@ -209,7 +210,7 @@ verified: R23 Верификатор
 
 ## Обзор
 - Период: YYYY-MM-01 .. YYYY-MM-{last}
-- Физическое время месяца: {h или —}
+- WakaTime месяца: {h}
 - Бюджет закрыт: {h}
 - Мультипликатор: {N.Nx} (прошлый месяц: {N.Nx})
 - Коммитов: {N}

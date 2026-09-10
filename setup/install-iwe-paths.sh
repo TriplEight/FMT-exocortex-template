@@ -11,7 +11,8 @@
 # при миграции ~/.iwe-paths не апгрейдился (Round 5 Евгения, 27 апр).
 #
 # Usage:
-#   bash install-iwe-paths.sh --workspace PATH --governance REPO_NAME [--dry-run] [--quiet]
+#   bash install-iwe-paths.sh --workspace PATH --governance REPO_NAME
+#       [--skip-zshenv] [--dry-run] [--quiet]
 #
 # Exit codes:
 #   0 — успех
@@ -23,12 +24,14 @@ WORKSPACE_DIR=""
 GOVERNANCE_REPO=""
 DRY_RUN=false
 QUIET=false
+SKIP_ZSHENV=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --workspace)  WORKSPACE_DIR="$2"; shift 2 ;;
         --governance) GOVERNANCE_REPO="$2"; shift 2 ;;
         --dry-run)    DRY_RUN=true; shift ;;
+        --skip-zshenv) SKIP_ZSHENV=true; shift ;;
         --quiet|-q)   QUIET=true; shift ;;
         --help|-h)
             grep '^#' "$0" | head -20
@@ -55,7 +58,11 @@ IWE_ENV_MARKER="# IWE environment (WP-219, DP.FM.009): lookup-слой для п
 
 if $DRY_RUN; then
     $QUIET || echo "  [DRY RUN] Would write $IWE_ENV_FILE (workspace=$WORKSPACE_DIR, governance=$GOVERNANCE_REPO)"
-    $QUIET || echo "  [DRY RUN] Would ensure $ZSHENV_FILE sources \$WORKSPACE_DIR/.iwe-paths"
+    if $SKIP_ZSHENV; then
+        $QUIET || echo "  [DRY RUN] Would leave $ZSHENV_FILE unchanged (--skip-zshenv)"
+    else
+        $QUIET || echo "  [DRY RUN] Would ensure $ZSHENV_FILE sources \$WORKSPACE_DIR/.iwe-paths"
+    fi
     exit 0
 fi
 
@@ -65,6 +72,7 @@ cat > "$IWE_ENV_FILE" <<IWEENV_EOF
 # Do not edit manually — changes will be lost.
 
 export IWE_WORKSPACE="$WORKSPACE_DIR"
+export IWE_ROOT="\$IWE_WORKSPACE"
 export IWE_TEMPLATE="\$IWE_WORKSPACE/FMT-exocortex-template"
 export IWE_SCRIPTS="\$IWE_TEMPLATE/scripts"
 export IWE_ROLES="\$IWE_TEMPLATE/roles"
@@ -74,29 +82,48 @@ IWEENV_EOF
 
 $QUIET || echo "  ✓ $IWE_ENV_FILE written (workspace=$WORKSPACE_DIR)"
 
-# Replace both the legacy $HOME/.iwe-paths one-liner and any older managed
-# block. Marker presence alone is not proof that it sources this workspace.
-if [ -f "$ZSHENV_FILE" ]; then
-    ZSHENV_TMP=$(mktemp)
-    awk '
-      /^# IWE environment \(WP-219, DP.FM.009\):/{skip=1; next}
-      skip && /^unset _IWE_ROOT$/{skip=0; next}
-      /\[ -f "\$HOME\/\.iwe-paths" \] && source "\$HOME\/\.iwe-paths"/{next}
-      !skip{print}
-    ' "$ZSHENV_FILE" > "$ZSHENV_TMP"
-    mv "$ZSHENV_TMP" "$ZSHENV_FILE"
+# WP-529 Ф94 (peer-session 2026-09-08-32): $HOME/.iwe-paths was the ORIGINAL
+# canonical file (Round 5, pre-WP-219) before the source-of-truth moved to
+# $WORKSPACE_DIR/.iwe-paths above. Installs from that era can still have a
+# real (non-symlink) file there that nothing regenerates or reads anymore —
+# flag it so custom edits to it don't silently stop mattering unnoticed.
+LEGACY_IWE_PATHS="$HOME/.iwe-paths"
+if [ -f "$LEGACY_IWE_PATHS" ] && [ ! -L "$LEGACY_IWE_PATHS" ] && [ "$LEGACY_IWE_PATHS" != "$IWE_ENV_FILE" ]; then
+    $QUIET || echo "  ⚠ Найден устаревший $LEGACY_IWE_PATHS (до WP-219) — больше не читается ни одним скриптом."
+    $QUIET || echo "    Актуальный файл: $IWE_ENV_FILE. Проверьте $LEGACY_IWE_PATHS на предмет ручных правок и удалите его вручную."
 fi
-if ! grep -qF "_IWE_ROOT=\"$WORKSPACE_DIR\"" "$ZSHENV_FILE" 2>/dev/null; then
-    cat >> "$ZSHENV_FILE" <<ZSHENV_EOF
+
+# issue #768: a foreign/unowned $ZSHENV_FILE (already pointing at a
+# different, already-configured workspace, per the caller's ownership check)
+# must not be touched — that real, per-user shell rc file is not scoped to
+# $WORKSPACE_DIR the way $IWE_ENV_FILE above is.
+if $SKIP_ZSHENV; then
+    $QUIET || echo "  ○ $ZSHENV_FILE unchanged (--skip-zshenv)"
+else
+    # Replace both the legacy $HOME/.iwe-paths one-liner and any older managed
+    # block. Marker presence alone is not proof that it sources this workspace.
+    if [ -f "$ZSHENV_FILE" ]; then
+        ZSHENV_TMP=$(mktemp)
+        awk '
+          /^# IWE environment \(WP-219, DP.FM.009\):/{skip=1; next}
+          skip && /^unset _IWE_ROOT$/{skip=0; next}
+          /\[ -f "\$HOME\/\.iwe-paths" \] && source "\$HOME\/\.iwe-paths"/{next}
+          !skip{print}
+        ' "$ZSHENV_FILE" > "$ZSHENV_TMP"
+        mv "$ZSHENV_TMP" "$ZSHENV_FILE"
+    fi
+    if ! grep -qF "_IWE_ROOT=\"$WORKSPACE_DIR\"" "$ZSHENV_FILE" 2>/dev/null; then
+        cat >> "$ZSHENV_FILE" <<ZSHENV_EOF
 
 # IWE environment (WP-219, DP.FM.009): lookup-слой для путей к скриптам
 _IWE_ROOT="$WORKSPACE_DIR"
 [ -f "\$_IWE_ROOT/.iwe-paths" ] && source "\$_IWE_ROOT/.iwe-paths"
 unset _IWE_ROOT
 ZSHENV_EOF
-    $QUIET || echo "  ✓ $ZSHENV_FILE → sources \$WORKSPACE_DIR/.iwe-paths"
-else
-    $QUIET || echo "  ○ $ZSHENV_FILE already sources $WORKSPACE_DIR/.iwe-paths"
+        $QUIET || echo "  ✓ $ZSHENV_FILE → sources \$WORKSPACE_DIR/.iwe-paths"
+    else
+        $QUIET || echo "  ○ $ZSHENV_FILE already sources $WORKSPACE_DIR/.iwe-paths"
+    fi
 fi
 
 # Auto-enable pre-commit hooks for IWE repos that have .githooks/

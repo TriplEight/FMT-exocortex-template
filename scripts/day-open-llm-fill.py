@@ -38,9 +38,49 @@ from wp_inbox import wp_card_paths  # noqa: E402 — lib path set above
 DEFAULT_PROXY_URL = "http://localhost:18765"
 SECTION_TIMEOUT_S = 60
 TOTAL_TIMEOUT_S = 300
-FAULT_PROFILE_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "agent_fault_remind.py"
-)
+
+
+def _validated_pipeline_workspace() -> Path | None:
+    """Return a physical IWE_ROOT supplied by the installed Day Open pipeline."""
+
+    raw = os.environ.get("IWE_ROOT", "").strip()
+    if not raw or "\x00" in raw:
+        return None
+    candidate = Path(raw).expanduser()
+    if candidate.is_symlink():
+        return None
+    try:
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return resolved if resolved.is_dir() else None
+
+
+PIPELINE_WORKSPACE = _validated_pipeline_workspace()
+
+
+def _fault_profile_workspace() -> Path:
+    configured = os.environ.get("IWE_WORKSPACE") or os.environ.get("WORKSPACE_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    return PIPELINE_WORKSPACE or Path.home() / "IWE"
+
+
+def _fault_profile_script() -> str:
+    """Resolve the one agent-neutral CLI in installed and template layouts."""
+
+    script_dir = Path(__file__).resolve().parent
+    workspace = _fault_profile_workspace()
+    configured_scripts = Path(os.environ.get("IWE_SCRIPTS") or workspace / "scripts")
+    candidates = (
+        script_dir / "agent-fault" / "iwe_checklist_memory.py",
+        configured_scripts / "agent-fault" / "iwe_checklist_memory.py",
+        workspace / "FMT-exocortex-template" / "scripts" / "agent-fault" / "iwe_checklist_memory.py",
+    )
+    return str(next((candidate for candidate in candidates if candidate.is_file()), candidates[0]))
+
+
+FAULT_PROFILE_SCRIPT = _fault_profile_script()
 
 
 def read_file(path: str | None, default: str = "") -> str:
@@ -51,27 +91,53 @@ def read_file(path: str | None, default: str = "") -> str:
 
 
 def load_fault_profile() -> str:
-    """Run agent_fault_remind.py --protocol open and return top fault rules.
+    """Run the unified agent-fault CLI and return this subject's top rules.
 
     Returns empty string on failure. Logs reason to stderr so silent disable
-    (caused by interpreter mismatch, regex drift, or remind-script breakage)
+    (caused by interpreter mismatch, regex drift, or CLI breakage)
     surfaces in pipeline logs instead of vanishing.
 
     Symmetric with .claude/hooks/inject-fault-profile.sh: same data source
-    (iwe_memory.db via agent_fault_remind.py), filtered to CRITICAL/MAJOR
+    (iwe_memory.db via the unified CLI), filtered to CRITICAL/MAJOR
     with n>=3.
     """
+    subject_kind = os.environ.get("IWE_FAULT_SUBJECT_KIND", "")
+    subject_id = os.environ.get("IWE_FAULT_SUBJECT_ID", "")
+    if subject_kind not in {"personality", "runtime", "system"} or not subject_id:
+        print("[INFO] fault-profile: explicit subject is not configured — skipped", file=sys.stderr)
+        return ""
     if not os.path.isfile(FAULT_PROFILE_SCRIPT):
         print(f"[INFO] fault-profile: {FAULT_PROFILE_SCRIPT} not found — skipped",
               file=sys.stderr)
         return ""
     try:
+        child_env = os.environ.copy()
+        if (
+            not child_env.get("IWE_WORKSPACE")
+            and not child_env.get("WORKSPACE_DIR")
+            and PIPELINE_WORKSPACE is not None
+        ):
+            # The governance pipeline derives IWE_ROOT from its own physical
+            # location. Adapt that trusted runtime fact to the canonical CLI's
+            # unchanged IWE_WORKSPACE → WORKSPACE_DIR → HOME/IWE contract.
+            child_env["IWE_WORKSPACE"] = str(PIPELINE_WORKSPACE)
         result = subprocess.run(
-            [sys.executable, FAULT_PROFILE_SCRIPT, "--protocol", "open"],
+            [
+                sys.executable,
+                FAULT_PROFILE_SCRIPT,
+                "remind",
+                "--protocol",
+                "open",
+                "--subject-kind",
+                subject_kind,
+                "--subject-id",
+                subject_id,
+            ],
+            env=child_env,
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode != 0:
-            print(f"[WARN] fault-profile: agent_fault_remind.py exit={result.returncode}, "
+            print(f"[WARN] fault-profile: unified CLI exit={result.returncode}, "
                   f"stderr={result.stderr.strip()[:200]}", file=sys.stderr)
             return ""
         lines = [
@@ -79,7 +145,7 @@ def load_fault_profile() -> str:
             if re.match(r"^🔴 \[(CRITICAL|MAJOR) \| n=\d+\]", line)
         ]
         if not lines:
-            print("[WARN] fault-profile: agent_fault_remind.py output had 0 lines "
+            print("[WARN] fault-profile: unified CLI output had 0 lines "
                   "matching CRITICAL/MAJOR n>=3 regex — possible format drift",
                   file=sys.stderr)
             return ""
@@ -125,7 +191,7 @@ def rebuild_compact_dashboard(text: str) -> str:
             if len(plan_rows) >= 7:
                 break
         elif plan_rows and not s.startswith("|"):
-            break  # таблица закончилась (Бюджет дня / пустая строка / следующий заголовок)
+            break  # таблица закончилась (Бюджет дня / пустая строка / </details>)
     if not plan_rows:
         return text
 
@@ -169,15 +235,19 @@ def rebuild_compact_dashboard(text: str) -> str:
     return "\n".join(out)
 
 
-def _panel_yesterday_iso() -> str:
-    """Вчера по московскому календарю — та же конвенция, что у ночного воркера (Ф3.3)."""
-    from datetime import datetime, timedelta, timezone
+def _dashboard_today_iso() -> str:
+    """Сегодня по московскому календарю -- дата, под которой dashboard_worker.py
+    пишет ночной снимок (запуск 07:30 MSK, WP-417 Ф-cutover-switch 2026-09-02).
+    Заменяет _panel_yesterday_iso() -- старая панель считала за ВЧЕРА (target_date
+    в panel_worker.py), PD-dashboard пишет файл под датой самого запуска."""
+    from datetime import datetime, timezone
     try:
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("Europe/Moscow"))
     except Exception:  # noqa: BLE001 — zoneinfo нет → Москва = UTC+3 (без DST с 2014)
+        from datetime import timedelta
         now = datetime.now(timezone.utc) + timedelta(hours=3)
-    return (now.date() - timedelta(days=1)).isoformat()
+    return now.date().isoformat()
 
 
 def _strip_panel_block(text: str, begin: str, end: str) -> str:
@@ -196,7 +266,8 @@ def _strip_panel_block(text: str, begin: str, end: str) -> str:
 GATE_METRICS_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "gate-metrics.sh"
 )
-GATE_SECTION_HEADER = "### Gate-метрики"
+GATE_SECTION_BEGIN = "<summary><b>Gate-метрики"
+GATE_SECTION_END = "</details>"
 
 
 def inject_gate_metrics(text: str) -> str:
@@ -226,54 +297,56 @@ def inject_gate_metrics(text: str) -> str:
         print(f"[inject_gate_metrics] failed: {e}", file=sys.stderr)
         return text
 
-    # Find "### Gate-метрики" header, replace everything up to the next
-    # heading line (any level) or end of text with the fresh output.
-    lines = text.splitlines(keepends=True)
-    start = None
-    for i, line in enumerate(lines):
-        if line.strip() == GATE_SECTION_HEADER:
-            start = i
-            break
-    if start is None:
+    # Find <summary><b>Gate-метрики then </summary> then </details>
+    # Replace everything between </summary> and </details> with gate output.
+    idx = text.find(GATE_SECTION_BEGIN)
+    if idx == -1:
         return text
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("#"):
-            end = i
-            break
+    summary_end = text.find("</summary>", idx)
+    if summary_end == -1:
+        return text
+    summary_end += len("</summary>")
+    close = text.find(GATE_SECTION_END, summary_end)
+    if close == -1:
+        return text
 
-    new_body = lines[start:start + 1] + ["\n", output + "\n", "\n"]
-    return "".join(lines[:start]) + "".join(new_body) + "".join(lines[end:])
+    new_body = "\n\n" + output + "\n\n"
+    return text[:summary_end] + new_body + text[close:]
 
 
 def inject_panel_tile(text: str) -> str:
-    """Врезать тайл табло (WP-417 Ф3.4) в Compact Dashboard перед END-маркером.
+    """Врезать тайл табло (WP-417 Ф-cutover-switch, 2026-09-02) в Compact Dashboard
+    перед END-маркером.
 
-    Локальный режим: читает самую свежую панель из panel.db (вариант A data-ready
-    gate) и рендерит блок. Идемпотентно — старый блок <!-- panel-tile --> вырезается
-    и заменяется свежим (повторный Day Open не дублирует). Деградирует мягко: нет БД
-    или ошибка чтения → тайл пропускается, открытие дня не падает (P4: причина в лог).
-    Общий scaffold не трогаем — врезка только в локальном пайплайне ${IWE_GOVERNANCE_REPO:-DS-strategy}.
+    Источник -- PD-dashboard (git, ночной писатель dashboard_worker.py), не
+    panel.db/Neon (старый WP-417 Ф3.4 источник superseded архитектурным пивотом
+    18.08-01.09, см. inbox/WP-417/WP-417.md "Актуализация и решение пилота о
+    составе табло"). Идемпотентно -- старый блок <!-- panel-tile --> вырезается
+    и заменяется свежим (повторный Day Open не дублирует). Деградирует мягко:
+    нет PD-dashboard/файла на сегодня -> тайл пропускается, открытие дня не
+    падает (P4: причина в лог). Общий scaffold не трогаем -- врезка только в
+    локальном пайплайне ${IWE_GOVERNANCE_REPO:-DS-strategy}.
     """
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
     try:
-        from panel_render import PANEL_BEGIN, PANEL_END, read_panel, render_panel_block
-    except Exception:  # noqa: BLE001 — panel-модулей нет → тайл просто не показываем
-        print("[inject_panel_tile] panel-модули недоступны — тайл пропущен", file=sys.stderr)
+        from dashboard_render import (
+            PANEL_BEGIN, PANEL_END, read_dashboard_snapshot, render_dashboard_panel_block,
+        )
+    except Exception:  # noqa: BLE001 — dashboard-модули недоступны → тайл просто не показываем
+        print("[inject_panel_tile] dashboard-модули недоступны — тайл пропущен", file=sys.stderr)
         return text
 
     marker = "---END-COMPACT-DASHBOARD---"
     if marker not in text:
         return text  # нет дашборда (необычный scaffold) — некуда врезать
 
-    account_id = os.environ.get("PANEL_ACCOUNT_ID", "local")
     try:
-        panel = read_panel(account_id)
-    except Exception:  # noqa: BLE001 — БД недоступна → тайл пропускаем, день не валим
-        print("[inject_panel_tile] чтение panel.db не удалось — тайл пропущен", file=sys.stderr)
+        snapshot = read_dashboard_snapshot(_fault_profile_workspace())
+    except Exception:  # noqa: BLE001 — PD-dashboard недоступен → тайл пропускаем, день не валим
+        print("[inject_panel_tile] чтение PD-dashboard не удалось — тайл пропущен", file=sys.stderr)
         return text
 
-    block = render_panel_block(panel, _panel_yesterday_iso())
+    block = render_dashboard_panel_block(snapshot, _dashboard_today_iso())
     text = _strip_panel_block(text, PANEL_BEGIN, PANEL_END)
     idx = text.find(marker)
     return text[:idx] + block + "\n" + text[idx:]
@@ -349,15 +422,62 @@ def collect_wp_facts(wp_dir: str) -> list[dict]:
     return facts
 
 
+def _strip_leading_details(content: str) -> str:
+    """Drop leading <details...> lines the LLM wrapped around its answer.
+
+    The canonical opening tag lives in the section header line, so any <details>
+    the LLM prepends is a duplicate with no <summary> — browsers render it as the
+    literal word "Details". Loops because the LLM occasionally stacks two openers.
+    """
+    stripped = content.lstrip("\n")
+    while stripped.lower().startswith("<details"):
+        first_nl = stripped.find("\n")
+        if first_nl == -1:
+            return ""
+        stripped = stripped[first_nl + 1:].lstrip("\n")
+    return stripped
+
+
+def _drop_trailing_closers(content: str, extra: int) -> str:
+    """Remove `extra` trailing </details> tags the LLM emitted beyond the original.
+
+    Excess closers close the outer <details> early and orphan every section below,
+    so the DayPlan tail silently disappears. Strips from the end, where stray
+    closers accumulate.
+    """
+    lines = content.rstrip().split("\n")
+    kept = []
+    for line in reversed(lines):
+        if extra > 0 and line.strip() == "</details>":
+            extra -= 1
+            continue
+        kept.append(line)
+    return "\n".join(reversed(kept))
+
+
+def has_bare_details(text: str) -> bool:
+    """True if any <details> opener lacks a <summary> within the next few lines.
+
+    A bare <details> is the "Details" rendering bug. Used as a post-fill gate so a
+    regression blocks the commit instead of reaching the pilot.
+    """
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().lower().startswith("<details"):
+            window = " ".join(lines[i + 1:i + 4]).lower()
+            if "<summary>" not in window:
+                return True
+    return False
+
+
 def split_into_chunks(text: str) -> list[dict]:
-    """Разбить текст на чанки по заголовкам верхнего уровня (##). Вложенные ### остаются
-    внутри родительского чанка."""
+    """Разбить текст на чанки по заголовкам ## или <details>."""
     chunks = []
     current_lines = []
     current_header = "preamble"
 
     for line in text.splitlines(keepends=True):
-        if line.startswith("## "):
+        if line.startswith("## ") or line.strip().startswith("<details"):
             if current_lines:
                 chunks.append({"header": current_header, "lines": current_lines, "has_pending": "<!-- PENDING" in "".join(current_lines)})
             current_header = line.strip()
@@ -391,10 +511,10 @@ def build_section_prompt(header: str, section_content: str, weekplan: str,
         "2. Ссылайся на реальные WP-номера из контекста.",
         "3. Если данных нет — напиши 'Нет данных' и удали маркер.",
         "4. Не меняй структуру markdown (таблицы, списки, жирный текст).",
-        "4a. Никаких HTML-тегов (<details>, <summary>, <div> и др.) — только markdown-заголовки ##/### (Obsidian ломает HTML-теги).",
+        "4a. Если секция начинается с <details> — обязательно сохрани <summary>...</summary> (если есть) и закрывающий </details> в конце секции.",
         "5. Верни ТОЛЬКО содержимое секции — БЕЗ заголовка секции.",
         "6. Если секция содержит таблицу — заполни ячейки с PENDING, остальные не трогай.",
-        "6a. Для таблицы 'Разбор заметок': ячейки в столбце 'Заметка' — wiki-ссылки вида [[fleeting-notes|«текст»]] (НЕ markdown-ссылки — Obsidian не резолвит [текст](путь.md) как заметку).",
+        "6a. Для таблицы 'Разбор заметок': ячейки в столбце 'Заметка' — ссылки вида [«текст»](../inbox/fleeting-notes.md) БЕЗ якоря (bold-текст не создаёт GitHub-якорей). Не добавляй #якорь. Не оставляй голый текст без ссылки.",
         "6b. Для секции 'Мир': если есть блок '**Вывод:**' с PENDING — заполни 2-4 предложениями: какие новости релевантны активным РП из WeekPlan. Без общих фраз, конкретика по WP-номерам.",
         "6c. Для таблицы 'Разбор заметок': ЗАПРЕЩЕНО выдумывать названия заметок. Используй ТОЛЬКО заголовки из 'КОНТЕКСТ: Fleeting Notes' ниже. Если контекст пустой или содержит только frontmatter — напиши 'нет заметок' в столбец 'Заметка'.",
         "",
@@ -449,6 +569,7 @@ def build_today_plan_prompt(header: str, section_content: str, weekplan: str,
         "6. Не меняй структуру markdown (таблицы, списки, жирный текст).",
         "7. Верни ТОЛЬКО содержимое секции — БЕЗ заголовка секции.",
         "8. Audit-trail для carry-over: после строки '**Carry-over из Day Close вчера:**' воспроизведи ВЕСЬ список из WeekReport ('Не выполнено (carry-over ...)') или вчерашнего DayPlan ('Завтра начать с'). Если какой-то пункт carry-over НЕ попал в таблицу плана — оставь его в самой строке carry-over с пометкой `(отложено: <причина>)` в круглых скобках сразу после пункта. Возможные причины: 'нет WP-ID — ad-hoc задача, не проходит JSON-fact pipeline' / 'условный carry-over \"если бюджет\", дневной бюджет заполнен другими РП' / 'WP в JSON, но статус — done/blocked'. НЕ выкидывай пункт молча — у пилота должен оставаться след. ВАЖНО: пункты с пометкой '(отложено: ...)' живут ТОЛЬКО в строке carry-over (текстовом следе), их часы НЕ входят в Бюджет дня (инвариант 5 остаётся в силе: бюджет = сумма часов JSON-фактов + mandatory_daily_wps).",
+        "9. В переданной секции таблица содержит одну строку-ОБРАЗЕЦ формата: '| 🔴 | С | NNN | **<!-- PENDING -->** | X | pending |'. Это НЕ данные и не РП из JSON — это только показ формата колонок. Эта строка целиком (включая литералы NNN, X, pending) НЕ должна попасть в твой ответ ни в каком виде. Замени её (и добавь остальные) РОВНО N строками, где N = число РП в JSON-фактах (инвариант 2) — по одной строке на каждый РП, реальные номер/название/часы/статус из JSON, без единого NNN/X/<!-- PENDING --> в финальной таблице.",
         "",
         "=== JSON-ФАКТЫ: Активные РП (источник — frontmatter WP-*.md) ===",
         facts_json,
@@ -506,8 +627,26 @@ def fill_chunk(chunk: dict, weekplan: str, active_wps: str, calendar: str,
     header = chunk["header"]
     content = "".join(chunk["lines"][1:])  # без заголовка
 
-    # Consolidated prompt with JSON facts for today_plan
-    is_today_plan = "Plan for today" in header or "today_plan" in header.lower()
+    # Consolidated prompt with JSON facts for today_plan.
+    # `header` is usually the bare "<details>"/"<details open>" tag (chunking
+    # stores the <summary> title in `content`, not `header`) — checking
+    # `header` alone means this branch never fires for that shape, and the
+    # plan table falls through to the generic per-section prompt, which
+    # leaves the scaffold's example placeholders (N/NNN/X) unreplaced instead
+    # of computing a real seq/hours value per WP. Checking `content` alone
+    # would instead miss a plain "## Plan for today" heading (chunk header
+    # can carry the title directly there) if the body never repeats the
+    # phrase — Codex review, WP-484 backfill-regression-fix session, 31.08.
+    # Checking both covers each chunking shape without betting on which one
+    # is live. Regressed and re-fixed three times in a consumer's installed
+    # copy (2026-07-09, then 26.08, then 31.08) — each time only that copy
+    # was patched, so this canonical source kept re-seeding the bug on the
+    # next backfill; fixed here too (WP-484, peer-session with Codex, same
+    # day) to close that loop.
+    is_today_plan = (
+        "Plan for today" in content or "today_plan" in content.lower()
+        or "Plan for today" in header or "today_plan" in header.lower()
+    )
     if is_today_plan and wp_facts:
         prompt = build_today_plan_prompt(header, content, weekplan, wp_facts,
                                          calendar, cp_profile, fault_profile)
@@ -520,6 +659,25 @@ def fill_chunk(chunk: dict, weekplan: str, active_wps: str, calendar: str,
 
     if not response.strip():
         raise RuntimeError(f"Empty response for section {header}")
+    if is_today_plan:
+        # WP-561 Ф11 (found live 2026-09-09): the example format row (day-open-
+        # scaffold.sh, "| ... | NNN | ... | X | pending |") is only half-marked
+        # as a placeholder -- one cell wrapped in <!-- PENDING -->, the rest
+        # plain literals -- so the LLM sometimes keeps it verbatim alongside
+        # the real per-WP rows instead of dropping it. day-open-checks-runner.sh
+        # already blocks the commit on this (Block DOF check), but that check
+        # only reports "1/22 failed", not why -- print the offending line(s)
+        # here, at the point they were produced, so the answer is in whatever
+        # log captures this script's stderr, without needing to reproduce the run.
+        leftover = [ln for ln in response.splitlines()
+                    if ln.strip().startswith("|")
+                    and re.search(r"\|\s*NNN\s*\||<!-- PENDING -->|\|\s*X\s*\|", ln)]
+        if leftover:
+            print("[WARN] today_plan response still contains the scaffold's "
+                  "example row (NNN/X/PENDING) -- Block DOF check will block "
+                  "the commit. Offending line(s):", file=sys.stderr)
+            for ln in leftover:
+                print(f"[WARN]   {ln}", file=sys.stderr)
     return response
 
 
@@ -576,8 +734,43 @@ def main() -> None:
             new_content = fill_chunk(chunk, weekplan, active_wps, calendar, cp_profile,
                                      args.proxy_url, args.proxy_secret, wp_facts,
                                      fault_profile, fleeting_notes=fleeting_notes)
-            # Reconstruct chunk: keep header, replace content
+            # Structural tag protection: restore canonical <summary>, drop LLM-wrapped
+            # <details>, and balance </details> so nesting stays valid.
+            original_text = "".join(chunk["lines"])
             header_line = chunk["lines"][0]
+            # Always restore canonical <summary> from scaffold — LLM may omit or alter it.
+            # re.sub removes whatever the LLM produced; we then prepend the original.
+            # If LLM dropped </summary> (malformed), regex doesn't match → prepend still runs,
+            # browser renders first <summary> (canonical) and ignores malformed tail.
+            if len(chunk["lines"]) > 1:
+                second_line = chunk["lines"][1]
+                if second_line.strip().startswith("<summary>"):
+                    nc = re.sub(r"<summary>.*?</summary>", "", new_content, count=1, flags=re.DOTALL).lstrip("\n")
+                    # Strip the LLM's own <details> opener from `nc` here, while it's still
+                    # leading (this is what the LLM wrapped its whole answer in, summary and
+                    # all). Doing this AFTER prepending `second_line` below is too late: the
+                    # combined string then starts with the canonical <summary>, not <details>,
+                    # so _strip_leading_details silently no-ops and the LLM's opener survives
+                    # as an orphaned bare <details> right after the summary (found 2026-07-02,
+                    # 8 sections in one DayPlan) — its matching closer is still counted as
+                    # "balanced" against the header's opener further down, so the header's own
+                    # <details> never gets closed and every section after it renders nested.
+                    nc = _strip_leading_details(nc)
+                    new_content = second_line + "\n" + nc
+            # Strip every leading <details...> line the LLM wrapped its answer in. header_line
+            # already carries the canonical opening tag; a leftover bare <details> without a
+            # <summary> renders as the literal word "Details". Loop, because the LLM sometimes
+            # emits two opening tags in a row.
+            new_content = _strip_leading_details(new_content)
+            # Balance </details> both ways. LLM may drop nested closers (add missing) or emit
+            # extras that close the outer block early and orphan the sections below (drop extras).
+            original_details_count = original_text.count("</details>")
+            new_details_count = new_content.count("</details>")
+            if new_details_count < original_details_count:
+                new_content = new_content.rstrip() + "\n</details>\n" * (original_details_count - new_details_count)
+            elif new_details_count > original_details_count:
+                new_content = _drop_trailing_closers(new_content, new_details_count - original_details_count)
+            # Reconstruct chunk: keep header, replace content
             new_lines = [header_line]  # header
             new_lines.append(new_content)
             # Ensure trailing newline if original had it
@@ -615,12 +808,10 @@ def main() -> None:
     tmp.write_text(result, encoding="utf-8")
     tmp.rename(out_path)
 
-    # Gate: HTML tags break Obsidian rendering (tables inside <details> especially).
-    # LLM sections are instructed (rule 4a) to never emit them — catch a regression
-    # here instead of letting it reach the pilot. Exit 2 so day-open-checks blocks
-    # the commit until it's fixed.
-    if re.search(r"<details|<summary|<div|<span|style=", result, re.IGNORECASE):
-        print("[WARN] HTML tag detected in filled DayPlan — Obsidian-incompatible output.", file=sys.stderr)
+    # Gate: a bare <details> without <summary> renders as the word "Details" in the
+    # pilot's DayPlan. Exit 2 so day-open-checks blocks the commit until it's fixed.
+    if has_bare_details(result):
+        print("[WARN] Bare <details> without <summary> detected — 'Details' rendering bug.", file=sys.stderr)
         sys.exit(2)
 
     if failed_sections:

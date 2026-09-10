@@ -34,6 +34,24 @@ GOV_REPO="${IWE_GOVERNANCE_REPO:-${IWE_GOVERNANCE_REPO:-DS-strategy}}"
 WORKSPACE="${IWE_WORKSPACE:-${IWE_ROOT:-$HOME/IWE}}"
 GOV_PATH="$WORKSPACE/$GOV_REPO"
 
+# find-python3.sh resolver (issue #764): $WORKSPACE/scripts/lib/find-python3.sh
+# never existed on any install. The manifest delivers find-python3.sh as this
+# hook's own sibling (.claude/lib/find-python3.sh), so resolve relative to
+# this hook's own location first; $IWE_SCRIPTS is an explicit override.
+resolve_find_python3() {
+    local candidate
+    if [ -n "${IWE_SCRIPTS:-}" ] && [ -f "$IWE_SCRIPTS/lib/find-python3.sh" ]; then
+        printf '%s\n' "$IWE_SCRIPTS/lib/find-python3.sh"
+        return 0
+    fi
+    candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)/lib/find-python3.sh"
+    if [ -f "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    return 1
+}
+
 # R4.5 fix (WP-273): trigger ТОЛЬКО по staged files, НЕ по тексту команды.
 # Старая логика грепала TOOL_INPUT на «DayPlan|day-close» — false positive
 # на любой коммит файла `day-close/SKILL.md` или сообщения с «day-close».
@@ -63,8 +81,8 @@ if [ -n "$DAYPLAN" ] && [ -f "$DAYPLAN" ]; then
 SECTIONS=(
   "План на сегодня|Plan for Today|Today.s Plan"
   "Календарь|Calendar"
-  "IWE за ночь|IWE Overnight"
-  "Разбор заметок|Notes Review"
+  "IWE за ночь|IWE [Oo]vernight"
+  "Разбор заметок|Notes [Rr]eview"
   "Итоги вчера|Yesterday"
 )
 
@@ -76,15 +94,12 @@ done
 
 # Check mandatory format elements
 
-# --- Ф3 Check 1: заголовки секций — ## (Obsidian-совместимый, formatting.md) ---
-# HTML-теги (<details>/<summary>) окончательно запрещены (2026-08-20) — Obsidian
-# ломает их рендер, особенно таблицы внутри <details>. Только ## считается заголовком.
-HEADINGS_COUNT=$(grep -cE '^## ' "$DAYPLAN" 2>/dev/null || true); HEADINGS_COUNT=${HEADINGS_COUNT:-0}
+# --- Ф3 Check 1: заголовки секций — ## (Obsidian-совместимый) или <summary> (сворачиваемые секции, formatting.md) ---
+# issue #221: formatting.md требует <details><summary> для DayPlan/WeekPlan (более новое решение,
+# заменившее старый Obsidian-only запрет на HTML-теги) — считаем оба варианта заголовком секции.
+HEADINGS_COUNT=$(grep -cE '^## |^[[:space:]]*<summary>' "$DAYPLAN" 2>/dev/null || true); HEADINGS_COUNT=${HEADINGS_COUNT:-0}
 if [ "$HEADINGS_COUNT" -lt 3 ]; then
-  ERRORS+=("Секций (##) < 3 найдено: $HEADINGS_COUNT. DayPlan должен иметь структуру из ## заголовков секций")
-fi
-if grep -qE '<details|<summary|<div|<span|style=' "$DAYPLAN" 2>/dev/null; then
-  ERRORS+=("Обнаружены HTML-теги (<details>/<summary>/<div>/<span>/style=) — запрещены, ломают Obsidian. Используй ## заголовки")
+  ERRORS+=("Секций (## или <summary>) < 3 найдено: $HEADINGS_COUNT. DayPlan должен иметь структуру из заголовков секций")
 fi
 
 # --- Ф3 Check 2: непустые обязательные секции ---
@@ -124,13 +139,40 @@ fi
 # "обязательных РП нет", секцию в DayPlan не требуем.
 MANDATORY_WPS_CONFIGURED=false
 DAY_RHYTHM_CONFIG="$WORKSPACE/memory/day-rhythm-config.yaml"
-if [ -f "$DAY_RHYTHM_CONFIG" ] && command -v python3 >/dev/null 2>&1; then
-  if python3 -c "
-import yaml, sys
-d = yaml.safe_load(open(sys.argv[1])) or {}
+if [ -f "$DAY_RHYTHM_CONFIG" ]; then
+  # WP-529 (continuation, 19.08): resolved here, inside the existing
+  # [ -f "$DAY_RHYTHM_CONFIG" ] guard — same lazy-placement rationale as the
+  # other sites in this migration (peer-session 2026-08-19-29, codex turn 1).
+  # No bare-python3 fallback: the resolver's own first candidate is already
+  # bare `python3` from PATH.
+  _RESOLVER=$(resolve_find_python3) || _RESOLVER=""
+  _RESOLVED_PYTHON3=""
+  [ -n "$_RESOLVER" ] && _RESOLVED_PYTHON3=$("$_RESOLVER" 2>/dev/null) || true
+  if [ -z "$_RESOLVED_PYTHON3" ]; then
+    # issue #765: резолвер python3 не менее надёжен, чем сам YAML — та же
+    # fail-closed граница, что применяется ниже к битому/нечитаемому конфигу.
+    ERRORS+=("day-rhythm-config.yaml есть, но python3 не резолвится (find-python3.sh не найден или не вернул интерпретатор) — mandatory-проверка невозможна, fail-closed")
+  else
+    # Коды: 0 = mandatory сконфигурирован; 1 = валидный конфиг без mandatory;
+    # 2+ = битый/нечитаемый YAML — fail-closed (тот же контракт, что sibling
+    # validate-staged-artifacts.sh).
+    _MANDATORY_RC=0
+    "$_RESOLVED_PYTHON3" -c "
+import sys
+try:
+    import yaml
+    d = yaml.safe_load(open(sys.argv[1]))
+except Exception:
+    sys.exit(2)
+if not isinstance(d, dict):
+    sys.exit(2)
 sys.exit(0 if d.get('mandatory_daily_wps') else 1)
-" "$DAY_RHYTHM_CONFIG" 2>/dev/null; then
-    MANDATORY_WPS_CONFIGURED=true
+" "$DAY_RHYTHM_CONFIG" 2>/dev/null || _MANDATORY_RC=$?
+    case "$_MANDATORY_RC" in
+      0) MANDATORY_WPS_CONFIGURED=true ;;
+      1) : ;; # валидный конфиг без mandatory — проверка не требуется
+      *) ERRORS+=("day-rhythm-config.yaml существует, но не читается (нет PyYAML / битый или пустой YAML / корень не map / интерпретатор упал rc=$_MANDATORY_RC) — mandatory-проверка невозможна, fail-closed") ;;
+    esac
   fi
 fi
 if [ "$MANDATORY_WPS_CONFIGURED" = "true" ] && ! grep -qi "mandatory" "$DAYPLAN"; then
@@ -167,14 +209,10 @@ if [ -n "$WEEKPLAN" ] && [ -f "$WEEKPLAN" ]; then
   WP_ERRORS=()
   WP_MISSING_LIST=()
 
-  # Детектор (а): >80 строк без достаточного числа ## заголовков (см. Check 1 выше —
-  # HTML-теги/<summary> запрещены окончательно, 2026-08-20)
-  WP_HEADINGS_COUNT=$(grep -cE '^## ' "$WEEKPLAN" 2>/dev/null || true); WP_HEADINGS_COUNT=${WP_HEADINGS_COUNT:-0}
+  # Детектор (а): >80 строк без достаточного числа заголовков — ## или <summary> (issue #221, см. Check 1 выше)
+  WP_HEADINGS_COUNT=$(grep -cE '^## |^[[:space:]]*<summary>' "$WEEKPLAN" 2>/dev/null || true); WP_HEADINGS_COUNT=${WP_HEADINGS_COUNT:-0}
   if [ "$WP_LINES" -gt 80 ] && [ "$WP_HEADINGS_COUNT" -lt 3 ]; then
-    WP_ERRORS+=("WeekPlan >80 строк ($WP_LINES) но секций (##) < 3 ($WP_HEADINGS_COUNT). Используй ## заголовки для структурирования.")
-  fi
-  if grep -qE '<details|<summary|<div|<span|style=' "$WEEKPLAN" 2>/dev/null; then
-    WP_ERRORS+=("Обнаружены HTML-теги (<details>/<summary>/<div>/<span>/style=) — запрещены, ломают Obsidian. Используй ## заголовки")
+    WP_ERRORS+=("WeekPlan >80 строк ($WP_LINES) но секций (## или <summary>) < 3 ($WP_HEADINGS_COUNT). Используй ## заголовки или <details><summary> для структурирования.")
   fi
 
   # Детектор (в) — обязательные секции WeekPlan — удалён (issue #318 hotfix,

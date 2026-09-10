@@ -3,7 +3,7 @@
 # see DP.SC.159, DP.ROLE.059
 # week-draft-append.sh — обновить метрики текущего дня в черновике недельного поста.
 #
-# Собирает: коммиты (all repos, since today 00:00),
+# Собирает: WakaTime (--today), коммиты (all repos, since today 00:00),
 # закрытые РП (из коммитов "close/done WP-NNN").
 #
 # Использование:
@@ -18,6 +18,7 @@
 set -euo pipefail
 
 WORKSPACE="${WORKSPACE_DIR:-$HOME/IWE}"
+WAKATIME_CLI="${WAKATIME_CLI:-$HOME/.wakatime/wakatime-cli}"
 
 PARAMS_FILE="${WORKSPACE}/params.yaml"
 KNOWLEDGE_REPO_REL=""
@@ -71,6 +72,21 @@ if [[ ! -f "$DRAFT_FILE" ]]; then
   exit 1
 fi
 
+# 1. WakaTime
+WAKA="—"
+if [[ -x "$WAKATIME_CLI" ]]; then
+  WAKA=$("$WAKATIME_CLI" --today 2>/dev/null | awk -F'[ ,]' '{
+    total=0
+    for(i=1;i<=NF;i++){
+      if($i=="hrs"||$i=="hr") total += $(i-2)*60 + ($(i-1)=="and"?0:$(i-1))
+      else if($i=="mins"||$i=="min") total += $(i-1)
+    }
+    if(total>=60) printf "%dh %02dmin", int(total/60), total%60
+    else printf "%dmin", total
+  }')
+  [[ -z "$WAKA" ]] && WAKA="—"
+fi
+
 # iwe_repo_dirs — печатает поддиректории с .git, дедуплицированные по реальному
 # физическому пути (repo-symlink алиас иначе считается отдельным репозиторием
 # наравне с оригиналом — завышенный счётчик коммитов, найдено 2026-07-17).
@@ -105,7 +121,7 @@ done < <(iwe_repo_dirs "$WORKSPACE"/*/)
 BUDGET="—"
 PROGRESS="—"
 
-NEW_ROW="| ${DOW_LABEL} | ${COMMITS} | ${WPS_CLOSED} | ${BUDGET} | ${PROGRESS} |"
+NEW_ROW="| ${DOW_LABEL} | ${WAKA} | ${COMMITS} | ${WPS_CLOSED} | ${BUDGET} | ${PROGRESS} |"
 
 echo "== Черновик: $DRAFT_FILE"
 echo "== Новая строка:"

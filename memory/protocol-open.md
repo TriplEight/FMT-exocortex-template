@@ -19,7 +19,7 @@ description: "Протокол ОРЗ — пошаговые инструкци�
 
 > **Триггер:** «открывай» / «открывай день». Полный алгоритм → `.claude/skills/day-open/SKILL.md`. **Исполнение:** пошагово через TodoWrite (каждый шаг = задача, блокирующее). Аналогично Close.
 
-> **Pending-мультипликатор (если Day Close не успел):** в шаге 1 «Вчера» — проверить наличие `day_close` записи за вчера в Neon (`domain_event WHERE event_type='day_close' AND external_id='day-close-{вчера}'`). Если отсутствует: пересчитать мультипликатор из внешнего источника времени (если подключён) → дозаписать в domain_event. Если источник не подключён — пропустить (multiplier_enabled: false).
+> **Вчерашний WakaTime (pending-мультипликатор):** в шаге 1 «Вчера» — проверить наличие `day_close` записи за вчера в Neon (`domain_event WHERE event_type='day_close' AND external_id='day-close-{вчера}'`). Если отсутствует: запросить WakaTime API `summaries?start={вчера}&end={вчера}` → пересчитать мультипликатор → дозаписать в domain_event. Причина: `--today` CLI не даёт данных за прошлый день (WP-299 Ф4 п.3).
 
 ## § Масштаб: Сессия (Session Open)
 
@@ -59,7 +59,17 @@ python3 "${IWE_SCRIPTS:-$HOME/IWE/scripts}/artifactor.py" "$REQUEST"
 #### Совпадает — работаем
 
 1. Ссылаемся на номер РП.
-2. **DayPlan Gate:** РП нет в DayPlan → добавить строку. strategy_day → пропустить. [[gate]]
+2. **DayPlan Gate:** до любого поиска или создания DayPlan прочитать
+   `${IWE_WORKSPACE:-$HOME/IWE}/${IWE_GOVERNANCE_REPO:-DS-strategy}/exocortex/day-rhythm-config.yaml`
+   → `day_open.strategy_day`. Если файл отсутствует, нечитаем, не разбирается
+   как YAML или значение не входит в карту ниже → **inventory/STOP только для
+   DayPlan-действия**: DayPlan не искать, не создавать и не изменять; назвать
+   причину пилоту. Только отсутствующий ключ имеет безопасный default `monday`.
+   Сравнить значение с сегодняшним днём через локале-независимый `date +%u` и
+   полную карту `monday=1, tuesday=2, wednesday=3, thursday=4, friday=5,
+   saturday=6, sunday=7`. Совпало → гейт неприменим: DayPlan не искать и не
+   создавать. Не совпало → только тогда проверить DayPlan; РП нет → добавить
+   строку. [[gate]]
 3. **Sync Gate (актуализация контекста РП).** Прочитать контекст РП и связанных РП → синхронизировать открытые фазы с тем, что фактически сделано. **Цель:** исключить дублирование работы, ложные блокеры, неверные оценки в Ритуале. [[gate]]
 
    **Race-guard:** если state-файл `.claude/state/wp-sync-<N>.done` существует И его mtime моложе 8 часов — пропустить (sync уже выполнен в этой сессии). Если файл есть, но mtime старше 8h — считать stale: `rm -f` и продолжить заново. Проверка: `find .claude/state/wp-sync-<N>.done -mmin -480 2>/dev/null` (пустой вывод = нет файла или stale → запускать; непустой = свежий → пропускать).
@@ -136,7 +146,7 @@ python3 "${IWE_SCRIPTS:-$HOME/IWE/scripts}/artifactor.py" "$REQUEST"
 
 **Шаг 4.** Регистрация в `<governance-repo>/inbox/open-sessions.log` (например DS-strategy): `YYYY-MM-DD HH:MM | WP-N | модель | описание`. Исключения — не регистрировать. [[gate]]
 
-**Шаг 4.5. Артефактор (автоматический).** Если класс ∈ {open-loop, problem-framing} И оценка ≥3h → выполнить `/artifactor` inline (без вопроса пользователю). Этапную карту вставить в WP context file (секция `## Этапы` в конец файла). Если класс trivial/closed-loop ИЛИ оценка <3h → пропустить молча. [[narrative]]
+**Шаг 4.5. Декомпозитор (автоматический).** Если класс ∈ {open-loop, problem-framing} И оценка ≥3h → выполнить `/decompose` inline (без вопроса пользователю). Этапную карту вставить в WP context file (секция `## Этапы` в конец файла). Если класс trivial/closed-loop ИЛИ оценка <3h → пропустить молча. [[narrative]]
 
 **EXTENSION POINT (protocol-open after):** `bash .claude/scripts/load-extensions.sh protocol-open after` — exit 0 → `Read` каждый файл из вывода (alphabetic) → выполнить. Exit 1 → пропустить. Поддерживает `extensions/protocol-open.after.md` И `extensions/protocol-open.after.<suffix>.md`. [[gate]]
 
