@@ -510,6 +510,7 @@ echo "2/5 WP-REGISTRY.md..."
 
 if ! python3 - "$REGISTRY" "$WP_NUM" "$PRIORITY" "$TITLE" "$REPO" "$BUDGET" "$GOV_REPO" "$STAKE_CELL" "$WP_ID" <<'PYEOF'
 import sys
+import re
 registry_path, wp_num, priority, title, repo, budget, gov_repo, stake, wp_id = sys.argv[1:10]
 
 with open(registry_path, "r", encoding="utf-8") as f:
@@ -519,7 +520,10 @@ with open(registry_path, "r", encoding="utf-8") as f:
 insert_at = None
 header_line = None
 for i, line in enumerate(lines):
-    if line.strip().startswith("|---") and i > 0 and lines[i-1].strip().startswith("| #"):
+    # Разделитель может быть выровнен пробелами ("| ---- |") — как его
+    # форматирует Obsidian-плагин таблиц; матчим оба стиля.
+    sep_norm = re.sub(r"\s+", "", line.strip())
+    if sep_norm.startswith("|---") and i > 0 and lines[i-1].strip().startswith("| #"):
         insert_at = i + 1
         header_line = lines[i-1]
         break

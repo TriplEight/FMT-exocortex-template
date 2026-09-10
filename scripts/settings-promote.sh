@@ -38,8 +38,12 @@ if [[ -z "$HOOK_NAME" || -z "$EVENT" ]]; then
     exit 1
 fi
 
-IWE="${IWE_WORKSPACE:-$HOME/IWE}"
-FMT_DIR="${IWE_TEMPLATE:-$IWE/FMT-exocortex-template}"
+# Путь по расположению скрипта (scripts/ внутри FMT-репо) — работает в чистом
+# окружении (pre-commit dry-run гоняет его под env -i, переменные IWE_* там нет)
+# и на установках с нестандартным путём workspace.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FMT_DIR="${IWE_TEMPLATE:-$(dirname "$SCRIPT_DIR")}"
+IWE="${IWE_WORKSPACE:-$(dirname "$FMT_DIR")}"
 SETTINGS="$FMT_DIR/.claude/settings.json"
 HOOK_PATH="\$CLAUDE_PROJECT_DIR/.claude/hooks/$HOOK_NAME"
 HOOK_FILE="$FMT_DIR/.claude/hooks/$HOOK_NAME"
