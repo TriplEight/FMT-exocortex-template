@@ -1090,7 +1090,7 @@ render_yesterday() {
 # Выводится в stdout ПОСЛЕ EOF-блока DayPlan через маркер ---COMPACT-DASHBOARD---
 # Читается агентом/пилотом как сводка дня; не входит в DayPlan-файл.
 # INVARIANT: скаффолд НЕ заполняет топ-7 РП — план ещё пуст (PENDING).
-# Топ-7 формирует day-open-llm-fill.py из готовой секции «План на сегодня»
+# Топ-7 формирует day-open-llm-fill.py из готовой секции «Plan for today»
 # (функция rebuild_compact_dashboard, WP-5 Ф 2026-06-11 П1).
 render_compact_dashboard() {
   echo ""
@@ -1101,7 +1101,7 @@ render_compact_dashboard() {
   # Placeholder для топ-7 — будет заменён LLM-fill после наполнения плана.
   # Если видишь эту строку в итоговом файле — значит LLM-fill не отработал
   # или rebuild_compact_dashboard не сработала (bug-2026-06-11).
-  echo "**Сегодня (топ-7 по приоритету):** <!-- filled by day-open-llm-fill.py from 'План на сегодня' -->"
+  echo "**Сегодня (топ-7 по приоритету):** <!-- filled by day-open-llm-fill.py from 'Plan for today' -->"
   echo ""
 
   # Дедлайны из календаря (если preflight OK)
@@ -1188,7 +1188,7 @@ SELF_DEV_BLOCK=$(render_self_dev)
 # SWEEP_WP_FULL: raw active-wp-sweep.sh output, kept only as input to SWEEP_WP_LIST below.
 # WP-7 DOSCAF1 (2026-07-04): no longer feeds an "Активные РП" DayPlan section — that
 # section was removed as a duplicate of current/priorities.yaml + current/active-wp.md.
-# SWEEP_WP_LIST: WP-NNN IDs for the "План на сегодня" PENDING instructions (line ~973) —
+# SWEEP_WP_LIST: WP-NNN IDs for the "Plan for today" PENDING instructions (line ~973) —
 # tells the LLM which open WPs beyond priorities.yaml to consider for today's plan.
 SWEEP_WP_FULL=$(bash "$IWE/scripts/active-wp-sweep.sh" "$IWE/${IWE_GOVERNANCE_REPO:-DS-strategy}/inbox" "$IWE" 2>/dev/null \
   || echo "<!-- active-wp-sweep: ошибка запуска -->")
@@ -1230,7 +1230,7 @@ generated_by: day-open-scaffold.sh (WP-264 Ф2)
 
 $SELF_DEV_BLOCK
 
-## План на сегодня
+## Plan for today
 
 <!-- PENDING: today_plan — синтез таблицы плана дня.
 

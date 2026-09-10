@@ -11,7 +11,7 @@ day-open-llm-fill.py — WP-356: per-section LLM-заполнение PENDING-м
 
 Инварианты:
 - Только секции с <!-- PENDING... --> отправляются в LLM (per-section isolation).
-- Секция 'План на сегодня' использует consolidated prompt с JSON-фактами из WP frontmatter.
+- Секция 'Plan for today' использует consolidated prompt с JSON-фактами из WP frontmatter.
 - Секция без PENDING = неизменна (идемпотентность).
 - Atomic write: tmp→rename если out == scaffold.
 - Timeout: 60s на секцию, 300s общий.
@@ -99,7 +99,7 @@ def extract_active_wps(wp_registry_text: str) -> str:
 
 
 def rebuild_compact_dashboard(text: str) -> str:
-    """Перестроить блок РП в Compact Dashboard из готовой секции 'План на сегодня'
+    """Перестроить блок РП в Compact Dashboard из готовой секции 'Plan for today'
     (топ-7 по приоритету), а не из алфавитного sweep активных РП.
 
     Compact dashboard рождается в скаффолде ДО наполнения плана, поэтому скаффолд
@@ -110,11 +110,11 @@ def rebuild_compact_dashboard(text: str) -> str:
     """
     lines = text.split("\n")
 
-    # 1. Собрать топ-7 строк-РП из таблицы 'План на сегодня'
+    # 1. Собрать топ-7 строк-РП из таблицы 'Plan for today'
     plan_rows = []
     in_plan = False
     for ln in lines:
-        if "План на сегодня" in ln:
+        if "Plan for today" in ln:
             in_plan = True
             continue
         if not in_plan:
@@ -437,12 +437,12 @@ def build_today_plan_prompt(header: str, section_content: str, weekplan: str,
             "",
         ]
     parts += [
-        "Тебе дана ОДНА секция DayPlan: 'План на сегодня' с маркерами <!-- PENDING: описание --> или <!-- PENDING -->.",
+        "Тебе дана ОДНА секция DayPlan: 'Plan for today' с маркерами <!-- PENDING: описание --> или <!-- PENDING -->.",
         "ЗАДАЧА: замени КАЖДЫЙ маркер на реальный, конкретный контент.",
         "",
         "КРИТИЧЕСКИ ВАЖНО (инварианты):",
         "1. Ниже передан СПИСОК АКТИВНЫХ РП в виде JSON. Это ЕДИНСТВЕННЫЙ источник состава РП, статусов и часов.",
-        "2. Таблица 'План на сегодня' ДОЛЖНА содержать РОВНО те РП, что есть в JSON. НЕ добавляй новые. НЕ убирай существующие.",
+        "2. Таблица 'Plan for today' ДОЛЖНА содержать РОВНО те РП, что есть в JSON. НЕ добавляй новые. НЕ убирай существующие.",
         "3. Статусы и часы (budget_h) берутся verbatim из JSON. Не инферируй и не меняй их из WeekPlan или других источников.",
         "4. Ты можешь адаптировать только: приоритизацию (🔴/🟡/🟢), формулировки колонки 'Результат', порядок строк.",
         "5. Бюджет дня должен строго соответствовать сумме часов из JSON + mandatory_daily_wps.",
@@ -507,7 +507,7 @@ def fill_chunk(chunk: dict, weekplan: str, active_wps: str, calendar: str,
     content = "".join(chunk["lines"][1:])  # без заголовка
 
     # Consolidated prompt with JSON facts for today_plan
-    is_today_plan = "План на сегодня" in header or "today_plan" in header.lower()
+    is_today_plan = "Plan for today" in header or "today_plan" in header.lower()
     if is_today_plan and wp_facts:
         prompt = build_today_plan_prompt(header, content, weekplan, wp_facts,
                                          calendar, cp_profile, fault_profile)

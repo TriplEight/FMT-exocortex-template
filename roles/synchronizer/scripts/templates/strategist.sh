@@ -34,17 +34,18 @@ escape_html() {
 table_to_list() {
     local file="$1"
     local section="$2"
-    # dayplan: 🚦 | ТВС | # | РП | h | Статус (2 leading columns vs weekplan)
-    # weekplan (default): # | РП | Бюджет | Статус | Дедлайн | Репо
+    # dayplan (EN): 🚦 | # | WP | h | Status (1 leading column)
+    # weekplan (default): # | WP | Budget | Status | Deadline | Repo
     local format="${3:-weekplan}"
 
     awk -v s="## ${section}" 'index($0,s)==1{f=1;next} f && /^## /{exit} f' "$file" \
         | grep '^|' \
         | tail -n +3 \
+        | sed -E 's/\[\[[^][]*\\?\|([^][]*)\]\]/\1/g' \
         | while IFS='|' read -r _ f1 f2 f3 f4 f5 f6 _rest; do
             local num rp hours status
             if [ "$format" = "dayplan" ]; then
-                num="$f3"; rp="$f4"; hours="$f5"; status="$f6"
+                num="$f2"; rp="$f3"; hours="$f4"; status="$f5"
             else
                 num="$f1"; rp="$f2"; hours="$f3"; status="$f4"
             fi
@@ -69,7 +70,7 @@ get_github_link() {
     local filename
     filename=$(basename "$file")
     local repo_url
-    repo_url=$(cd "$STRATEGY_REPO_DIR" && git remote get-url origin 2>/dev/null | sed 's/\.git$//' | sed 's|git@github.com:|https://github.com/|')
+    repo_url=$(cd "$STRATEGY_REPO_DIR" && git remote get-url origin 2>/dev/null | sed 's/\.git$//' | sed 's|git@\([^:]*\):|https://\1/|')
     if [ -n "$repo_url" ]; then
         local branch
         branch=$(cd "$STRATEGY_REPO_DIR" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -98,21 +99,21 @@ build_message() {
             local title
             title=$(grep '^# ' "$file" | head -1 | sed 's/^# //' | escape_html)
             local plan_items
-            plan_items=$(table_to_list "$file" "План на сегодня" "dayplan" | escape_html)
+            plan_items=$(table_to_list "$file" "Plan for today" "dayplan" | escape_html)
 
             printf "<b>📋 %s</b>\n\n" "$title"
-            printf "<b>План:</b>\n%s" "$plan_items"
+            printf "<b>Plan:</b>\n%s" "$plan_items"
             ;;
 
         "session-prep")
             local title
             title=$(grep '^# ' "$file" | head -1 | sed 's/^# //' | escape_html)
             local plan_items
-            plan_items=$(table_to_list "$file" "Рабочие продукты" | escape_html)
-            [ -z "$plan_items" ] && plan_items=$(table_to_list "$file" "План на неделю" | escape_html)
+            plan_items=$(table_to_list "$file" "Work products" | escape_html)
+            [ -z "$plan_items" ] && plan_items=$(table_to_list "$file" "Plan for the week" | escape_html)
 
             printf "<b>📅 %s</b>\n\n" "$title"
-            printf "<b>Рабочие продукты:</b>\n%s" "$plan_items"
+            printf "<b>Work products:</b>\n%s" "$plan_items"
             ;;
 
         "week-review")
